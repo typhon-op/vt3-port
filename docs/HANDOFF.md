@@ -428,3 +428,94 @@ help), stencil (the shim never enables it), bone palettes (identical on GL and V
 - Commits use the noreply identity (`191880570+hjcoggan@users.noreply.github.com`) and end with the
   Co-Authored-By trailer the session names. Push reviewed progress. Never commit game data.
 - Builds take seconds: build inline. Long self-contained investigations go to subagents.
+
+## Roadmap: audio scheduling and Android lifecycle (2026-11-20)
+
+Status: implemented and host-tested; **not built for Android and not heard on the device** (this
+session had no NDK/SDK/JDK and no `VT3.exe`/game data, so nothing could be compiled for arm64 and no
+APK was produced). Nothing below claims the menu sound is fixed.
+
+Two commits:
+
+| Commit | Scope |
+|---|---|
+| `474e281` | `runtime/shim/src/dsound_stub.c`, `runtime/shim/include/win32/dsound.h`, `runtime/include/vt3/vt3_audio.h`, `runtime/src/audio/audio_android.c`, `runtime/src/audio/audio_sdl.c`, `runtime/src/audio/ringbuf.c`, `runtime/tests/selftest.c` |
+| `8a1570b` | `runtime/src/platform/platform_android.c` |
+
+### Audio scheduling (phase 3)
+
+- **Guest writes were waiting for the DSP pass.** The mixer held `g_mu` across every active buffer
+  (up to 960 frames) *and* the trace's `printf`. It now takes a snapshot under `g_mu` (`ds_mix_job`),
+  renders each buffer with the lock released, and reacquires it only to commit. Guest
+  `Lock`/`GetCurrentPosition`/`Set*` now wait for a few `memcpy`s, not for mixing.
+- **Lifetime is explicit.** A snapshotted buffer is `pinned`; `Release` mid-chunk sets `dead` and the
+  mixer frees it after the commit (`g_graveyard`), so a guest `Release` never blocks and no pointer
+  outlives its object. `mix_seq` drops a chunk that raced `Play`/`Stop`/`SetCurrentPosition`/
+  `SetFormat`/`SetFrequency`; `Play` bumps it only when playback actually starts.
+- **Late is no longer the same as stale.** An unmarked block keeps the gate open for
+  `VT3_MIX_GRACE_FRAMES` (144 output frames, 3 ms) once per stale stretch. A writer that is one lock
+  acquisition behind now costs nothing; a writer that never arrives still closes the gate, so
+  e8d1a37's no-replay property holds. `Play`/`SetCurrentPosition` re-arm the grace.
+- **Background no longer jumps the stream.** `sync_pause_locked()` freezes the mixer timeline and
+  every `play_ns` while `vt3_audio_is_paused()`, and shifts them by exactly the pause on the first
+  call after resume. It runs from the mixer *and* from `guest_lock()`, so the game's audio-writer
+  thread (which runs on its own and does not go through the pump) cannot advance the stream in the
+  background or observe a cursor the mixer disagrees with at the resume boundary.
+- **Recovery is not final any more.** A failed first open keeps the object and returns success, so the
+  pump can retry (a busy or not-yet-ready output no longer means a silent session). A failed reopen
+  sets `lost` again and backs off 250 ms, then 1 s. The ring is dropped when a new stream opens
+  (`vt3_rb_reset`), because its content was produced for the dead one. A reopen is skipped while the
+  app is paused and retried on resume.
+- **Sink diagnostics.** A callback that read nothing at all is now counted as `starved`, separately
+  from a partial read (`underruns`); the old "underruns 0" hid a gated or starved sink.
+
+`VT3_TRACE_AUDIO=1`, once a second, now prints: playing buffers, peak, underruns, **starved**, ring
+fill, gap, resyncs, **guest lock takes/avg/max**, and per buffer: locks, plays, below-full gate ms,
+stale events and their byte, **grace-held ms**, **writer-skipped regions and their audio duration**,
+read-behind. `VT3_DS_NO_GATE=1` still pins the gate open for A/B.
+
+### Android lifecycle (phase 4)
+
+- `vt3_platform_init` waited in `ALooper_pollOnce(-1)` for ever when no surface arrived. It now waits
+  at most 10 s (`INIT_WINDOW_TIMEOUT_MS`) in 100 ms slices, processes destroy requests, and returns
+  -1 with a diagnostic. The shim already falls back to headless, so the game reports it instead of
+  hanging.
+- One pause state (`g_paused` from `APP_CMD_PAUSE`/`APP_CMD_RESUME`, plus `g_window` from
+  `APP_CMD_INIT_WINDOW`/`APP_CMD_TERM_WINDOW`) feeds `apply_audio_state()`. Consequences: audio stops
+  before the surface is destroyed; the blocking "no window" wait restores the real state instead of
+  resuming unconditionally; `APP_CMD_DESTROY` and shutdown pause; a new window queues
+  `VT3_EV_RESIZE`; `vt3_audio_recover()` still runs every pump.
+
+### Verification
+
+Run here (host x86-64, gcc):
+
+- `shim/src/dsound_stub.c` and the other changed C files compile with `-Wall -Wextra`; the two
+  Android-only files (`audio_android.c`, `platform_android.c`) were syntax-checked against minimal
+  stand-in AAudio/NDK headers. **This is not an NDK build.**
+- `tests/selftest.c` linked against the shim and the non-platform core sources (no SDL3/CMake in this
+  environment) with a stub audio backend: all groups pass, including the new grace-window, fade-out,
+  `ds_writer_gap` and re-armed-grace checks. Exit 77 = unit checks passed, ADX skipped (no path).
+- ASan stress harness (local, not committed): a writer thread hammering
+  `Lock`/`Unlock`/`GetCurrentPosition`/`SetVolume` plus a thread doing create → `Play` → `Release`
+  churn while the mixer renders, 3 s. No use-after-free, no double free. Deliberately not TSan: the
+  game-writes-while-the-mixer-reads race is the sound-card model and would be reported by design.
+
+Not run, and required before claiming anything about the sound: `python build.py android` (or
+`build_apk.py`), `adb install`, and a listen.
+
+### Remaining limitations / device tests owed
+
+1. **The grace is a perceptual change that has not been heard.** 3 ms is chosen from the measured
+   writer-gap percentiles, not from listening. If it smears transients (`VT3_DS_NO_GATE=1` A/B), the
+   value is one constant in `dsound.h`.
+2. **Skipped writes are still unrecoverable.** The trace now separates them from sink trouble, but a
+   region the game never wrote cannot be mixed. The worst menu loads still hold the guest lock in one
+   unbroken 100-456 ms run with no shim call to hand off at; that is guest code, not this layer.
+3. **Pause assumes the writer stops too.** If the game's audio thread keeps writing during a long
+   background, its stream is frozen and resumes from where it stopped: intentional continuity, but it
+   means the resume point is not "live" content.
+4. **Device checklist:** background/resume with music playing (no jump, no burst, no silence);
+   lock/unlock screen and sleep/wake (window destroyed and recreated); Bluetooth connect/disconnect
+   during a match (reopen, and the retry path when the new route is busy); volume keys; a cold start
+   where another app holds the output (should start silent and come in once the pump reopens).
