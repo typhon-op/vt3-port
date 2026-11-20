@@ -8,9 +8,12 @@
  * (vt3_audio.h). For each output frame it reads the buffer at the position the wall clock
  * gives, so it reads only what the game has already written: the game writes about 50 ms
  * ahead of that position. The output ring adds about 40 ms of delay before the sound is heard,
- * which does not change what is read. Buffers are converted to 48 kHz stereo 16-bit with
- * linear interpolation (a 22.05 or 44.1 kHz buffer is resampled smoothly; holding each sample
- * the way nearest-neighbour does aliases into a hard, gargly edge) and a surround downmix.
+ * which does not change what is read. The mixer snapshots what it needs under the lock, mixes
+ * with the lock released, and commits only the result, so a guest Lock or GetCurrentPosition
+ * waits for a few copies rather than for the DSP pass; `VT3_TRACE_AUDIO=1` reports that wait.
+ * Buffers are converted to 48 kHz stereo 16-bit with linear interpolation (a 22.05 or 44.1 kHz
+ * buffer is resampled smoothly; holding each sample the way nearest-neighbour does aliases into
+ * a hard, gargly edge) and a surround downmix.
  * SetFrequency changes the playback rate, and SetPan attenuates the far channel. If no device
  * opens, playback stays silent and the game still runs.
  *
@@ -65,6 +68,16 @@ typedef struct ds_buffer {
     uint32_t freq;
     uint8_t *fresh;              /* one flag per FRESH_BLOCK bytes: set when the game writes it, cleared once played */
     ds_mix_state mix;            /* resampler state; only the mixer thread reads it, and Play/SetCurrentPosition reset it under g_mu */
+    uint32_t mix_seq;            /* bumped whenever the game retimes playback; the mixer drops a
+                                  * chunk whose seq changed under it */
+    int pinned;                  /* the mixer is mixing this buffer with g_mu released */
+    int dead;                    /* released while pinned: the mixer frees it after the chunk */
+    uint32_t last_write_end;     /* trace: byte after the end of the last Unlock's region */
+    int have_written;
+    uint32_t write_skips;        /* trace: Unlocks that did not continue where the last one ended */
+    uint64_t write_gap_bytes;    /* trace: bytes those skips never wrote */
+    uint32_t trace_dip_frames;   /* trace: below-full gate frames accumulated since the last report */
+    uint32_t trace_stale_events, trace_stale_blk, trace_grace_frames;
     uint32_t n_locks, n_plays;   /* trace: how often the game wrote and played this buffer */
     uint32_t obj;                /* guest object id, as the per-event trace prints it */
 } ds_buffer;
@@ -87,8 +100,14 @@ static ds_buffer *g_active[MIX_MAX_ACTIVE];
 static int g_nactive;
 static vt3_audio *g_out;
 static uint64_t g_mix_next_ns;
+static uint64_t g_pause_ns;      /* when the platform paused the output, or 0: the timeline is frozen */
 static size_t g_ring_bytes;      /* trace: output ring size, to report its fill */
 static uint32_t g_resyncs;       /* trace: wall-clock resyncs of the mixer timeline */
+
+/* Buffers whose Release arrived while the mixer had them pinned. The mixer frees them after
+ * the chunk it is mixing, so a guest Release never waits for the DSP pass. */
+static ds_buffer *g_graveyard[MIX_MAX_ACTIVE];
+static int g_ngrave;
 
 /* VT3_DS_NO_GATE=1 pins the stale-block gate open: the mixer ignores the fresh marks
  * entirely (A/B experiment for whether the gate is what gargles a sound). */
@@ -129,6 +148,52 @@ static uint64_t now_ns(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
+/* ---- guest-side lock wait ---------------------------------------------------
+ * Every guest call that reads playback state takes g_mu. The mixer used to hold it across a
+ * whole DSP pass, which made those calls late; it no longer does, and this is the measurement
+ * that says so. Counters are written while g_mu is held, so the trace can read them there. */
+static uint64_t g_lock_wait_ns;      /* total wait of guest takes since start */
+static uint64_t g_lock_wait_max_ns;  /* worst single wait */
+static uint32_t g_lock_takes;
+
+/* Brings the play clocks across a platform pause, with g_mu held: frozen while the output is
+ * paused, and shifted forward by exactly the pause on the first call after the resume. It runs
+ * from guest_lock as well as from the mixer, so the first guest call after a resume (the audio
+ * writer wakes on its own thread, not only with the game loop) sees the same continuous cursor
+ * the mixer does, with no window where the two disagree. */
+static void sync_pause_locked(uint64_t now)
+{
+    if (vt3_audio_is_paused(g_out)) {
+        if (!g_pause_ns) g_pause_ns = now;
+        return;
+    }
+    if (!g_pause_ns) return;
+    uint64_t shift = now - g_pause_ns;
+    g_pause_ns = 0;
+    g_mix_next_ns += shift;
+    for (int i = 0; i < g_nactive; i++) g_active[i]->play_ns += shift;
+    VT3_INFO("audio: resumed after %llu ms", (unsigned long long)(shift / 1000000u));
+}
+
+static void guest_lock(void)
+{
+    uint64_t t0 = now_ns();
+    pthread_mutex_lock(&g_mu);
+    uint64_t d = now_ns() - t0;
+    g_lock_wait_ns += d;
+    if (d > g_lock_wait_max_ns) g_lock_wait_max_ns = d;
+    g_lock_takes++;
+    sync_pause_locked(now_ns());
+}
+
+/* The clock the play cursors run on, read with g_mu held. While the output is paused it stays
+ * at the instant the pause began, so a writer thread that keeps running in the background does
+ * not advance the stream; on resume play_ns values have already been shifted by the pause. */
+static uint64_t play_clock(uint64_t now)
+{
+    return g_pause_ns ? g_pause_ns : now;
 }
 
 /* Little-endian readers for the guest WAVEFORMATEX bytes. */
@@ -235,6 +300,32 @@ static void mark_fresh(ds_buffer *b, uint32_t off, uint32_t n)
     for (uint32_t k = off / FRESH_BLOCK; k * FRESH_BLOCK < end; k++) __atomic_store_n(&b->fresh[k], 1, __ATOMIC_RELEASE);
 }
 
+/* Bytes between where the previous Unlock ended and where this one starts: content the writer
+ * skipped instead of producing (a stall that resumes at a later position, the 11-16% of Locks
+ * the menu loads show). Diagnostics: the mixer cannot recover audio that was never written. */
+uint32_t ds_writer_gap(uint32_t last_end, uint32_t off, uint32_t bytes)
+{
+    if (bytes == 0 || last_end >= bytes || off >= bytes) return 0;
+    return off >= last_end ? off - last_end : off + bytes - last_end;
+}
+
+/* One region the game unlocked: account for it and mark the blocks it covers. Runs on the
+ * buffer's writer (guest) thread only; the trace reads the counters with atomics. */
+static void note_write(ds_buffer *b, uint32_t off, uint32_t n)
+{
+    if (!b->bytes || n == 0 || off >= b->bytes) return;
+    if (n > b->bytes - off) n = b->bytes - off;
+    if (b->have_written) {
+        uint32_t gap = ds_writer_gap(b->last_write_end, off, b->bytes);
+        if (gap) {
+            __atomic_fetch_add(&b->write_skips, 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&b->write_gap_bytes, gap, __ATOMIC_RELAXED);
+        }
+    }
+    b->last_write_end = (off + n) % b->bytes;
+    b->have_written = 1;
+}
+
 /* ---- the mixer core ---------------------------------------------------------
  * ds_mix_render, ds_mix_volume and ds_mix_pan are declared in win32/dsound.h and checked by
  * tests/selftest.c. The phase runs in Q32 source frames: an output frame advances it by
@@ -301,7 +392,21 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
             }
             /* Acquire, pairing with mark_fresh's release: the game's samples must be visible
              * once the flag is. A missed mark only extends the dip by one ramp. */
-            if (!__atomic_load_n(&fresh[blk], __ATOMIC_ACQUIRE)) target = 0;
+            if (!__atomic_load_n(&fresh[blk], __ATOMIC_ACQUIRE)) {
+                /* The writer may be a few output frames behind this block boundary: it just
+                 * waited for a guest lock, and the mixer got there first. Hold the gate open
+                 * for VT3_MIX_GRACE_FRAMES once per stale stretch, so that a write landing
+                 * inside the grace costs nothing. A write that never comes still closes the
+                 * gate, so old audio is never replayed (e8d1a37's property). */
+                if (!st->stale && st->grace > 0) {
+                    st->grace--;
+                    st->grace_frames++;
+                } else {
+                    target = 0;
+                }
+            } else {
+                st->grace = VT3_MIX_GRACE_FRAMES;
+            }
         }
         /* Trace: count each continuous stretch of stale silence once, at the block that
          * caused it, so a per-second summary can be aligned with the game's write times. */
@@ -349,15 +454,40 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
     return j;
 }
 
-/* Mixes one playing buffer into acc for frames output frames, starting at output time t0. The
- * start position comes from the same wall-clock model as GetCurrentPosition, so the two agree. */
-static void mix_buffer_locked(ds_buffer *b, int32_t *acc, uint32_t frames, uint64_t t0)
+/* ---- the mixer's work item ---------------------------------------------------
+ * The mixer used to hold g_mu across the whole DSP pass: every active buffer for up to 960
+ * frames, plus the trace's printf. A guest Lock or GetCurrentPosition waiting for that is a
+ * late write, and a late write is a block the mixer reaches unmarked. It now copies what it
+ * needs under g_mu, mixes with the lock released, and takes it again only to commit.
+ *
+ * The PCM stays in guest memory that the game may write while it is mixed: that is the same
+ * race a sound card has with the game's write cursor, and it is deliberately unchanged. What
+ * is new is lifetime and ordering. A snapshotted buffer is pinned, so Release can only mark
+ * it dead and the mixer frees it after the commit; no pointer outlives its object. Every call
+ * that retimes playback bumps mix_seq, and a chunk whose seq changed is not committed, so a
+ * Play, Stop or seek that lands mid-chunk wins over the state the mixer computed. */
+
+typedef struct ds_mix_job {
+    ds_buffer *b;
+    const uint8_t *data;
+    uint8_t *fresh;
+    uint32_t bytes, nch, bits, align, hz, seq;
+    int looping;
+    double gl, gr;
+    ds_mix_state st;      /* gate, phase, last_blk and stale carried in from the buffer */
+    int finished;
+} ds_mix_job;
+
+/* Copies one playing buffer's mix inputs under g_mu. The start position comes from the same
+ * wall-clock model as GetCurrentPosition, so the two agree. Returns 0 when the buffer cannot be
+ * mixed or has played out (which stops it, as the mixer did before). */
+static int job_snapshot_locked(ds_buffer *b, ds_mix_job *j, uint64_t t0)
 {
     uint32_t nch = fmt16(b->fmt, 2), bits = fmt16(b->fmt, 14), align = fmt16(b->fmt, 12);
     uint32_t rate = rd32(b->fmt, 4);
-    if (nch < 1 || nch > 8 || (bits != 8 && bits != 16) || align == 0 || rate == 0 || b->bytes < align) return;
+    if (nch < 1 || nch > 8 || (bits != 8 && bits != 16) || align == 0 || rate == 0 || b->bytes < align) return 0;
     const uint8_t *data = d3d9_gmem(b->storage, b->bytes);
-    if (!data) return;
+    if (!data) return 0;
     uint32_t src_frames = b->bytes / align;
     uint32_t hz = b->freq ? b->freq : rate;        /* SetFrequency overrides the format's rate */
     uint64_t moved_ns = t0 > b->play_ns ? t0 - b->play_ns : 0;
@@ -368,21 +498,76 @@ static void mix_buffer_locked(ds_buffer *b, int32_t *acc, uint32_t frames, uint6
         b->playing = 0;
         b->pos = 0;
         active_remove_locked(b);
-        return;
+        return 0;
     }
-    b->mix.phase = (uint64_t)(start * 4294967296.0);
+    memset(j, 0, sizeof *j);
+    j->b = b;
+    j->data = data;
+    j->bytes = b->bytes;
+    j->nch = nch;
+    j->bits = bits;
+    j->align = align;
+    j->hz = hz;
+    j->looping = b->looping;
+    j->fresh = ds_no_gate() ? NULL : b->fresh;
+    j->seq = b->mix_seq;
+    j->st = b->mix;
+    j->st.phase = (uint64_t)(start * 4294967296.0);
+    j->st.dip_frames = 0;         /* per-chunk diagnostics; the trace accumulates them */
+    j->st.stale_events = 0;
+    j->st.grace_frames = 0;
     double gain = ds_mix_volume(b->volume), gl, gr;
     ds_mix_pan(b->pan, &gl, &gr);
-    gl *= gain;
-    gr *= gain;
-    uint32_t done = ds_mix_render(acc, frames, data, b->bytes, nch, bits, align, b->looping,
-                                  ds_no_gate() ? NULL : b->fresh, ds_mix_step(hz), gl, gr, &b->mix);
-    if (done < frames) {                             /* the buffer ran out mid-chunk */
-        b->playing = 0;
-        b->pos = 0;
-        b->mix.gate = 0;
-        b->mix.last_blk = UINT32_MAX;
-        active_remove_locked(b);
+    j->gl = gl * gain;
+    j->gr = gr * gain;
+    b->pinned = 1;
+    return 1;
+}
+
+/* Mixes one job with g_mu released. */
+static void job_render(ds_mix_job *j, int32_t *acc, uint32_t frames)
+{
+    uint32_t done = ds_mix_render(acc, frames, j->data, j->bytes, j->nch, j->bits, j->align,
+                                  j->looping, j->fresh, ds_mix_step(j->hz), j->gl, j->gr, &j->st);
+    if (done < frames) j->finished = 1;              /* the buffer ran out mid-chunk */
+}
+
+/* Frees the host parts of a buffer. Called under g_mu; the object itself is freed after the
+ * mixer's lock is released (guest heap frees are short, so they stay here). */
+static void bury_locked(ds_buffer *b)
+{
+    if (b->storage) HeapFree(GetProcessHeap(), 0, b->storage);
+    free(b->fresh);
+    b->storage = 0;
+    b->fresh = NULL;
+}
+
+/* Publishes a job's result under g_mu, unless the game retimed the buffer while it mixed. */
+static void job_commit_locked(ds_mix_job *j)
+{
+    ds_buffer *b = j->b;
+    if (b->mix_seq == j->seq) {
+        b->mix = j->st;
+        b->mix.dip_frames = 0;
+        b->mix.stale_events = 0;
+        b->mix.grace_frames = 0;
+        b->trace_dip_frames += j->st.dip_frames;
+        b->trace_stale_events += j->st.stale_events;
+        if (j->st.stale) b->trace_stale_blk = j->st.stale_blk;
+        b->trace_grace_frames += j->st.grace_frames;
+        if (j->finished) {
+            b->playing = 0;
+            b->pos = 0;
+            b->mix.gate = 0;
+            b->mix.last_blk = UINT32_MAX;
+            active_remove_locked(b);
+        }
+    }
+    b->pinned = 0;
+    if (b->dead) {                                   /* Release arrived mid-chunk */
+        bury_locked(b);
+        if (g_ngrave < MIX_MAX_ACTIVE) g_graveyard[g_ngrave++] = b;
+        else free(b);                                /* the slot array is full: free here, not leak */
     }
 }
 
@@ -397,38 +582,77 @@ static void raise_mixer_priority(void)
 #endif
 }
 
+/* One buffer's line of the once-a-second trace, gathered under g_mu and printed after it. */
+typedef struct mix_trace_stat {
+    uint32_t obj, bytes, rate, ch, bits, locks, plays, below_full_ms, stale_events, stale_byte;
+    uint32_t behind_ms, skipped, skipped_ms, grace_ms;
+    int looping, playing;
+} mix_trace_stat;
+
 static void *mix_thread(void *arg)
 {
     (void)arg;
     raise_mixer_priority();
     static int32_t acc[MIX_MAX_FRAMES * MIX_CH];
     static int16_t out[MIX_MAX_FRAMES * MIX_CH];
-    /* VT3_TRACE_AUDIO=1 logs once a second: buffers playing, peak level, device underruns. */
+    static ds_mix_job jobs[MIX_MAX_ACTIVE];
+    static mix_trace_stat stats[MIX_MAX_ACTIVE];
+    ds_buffer *grave[MIX_MAX_ACTIVE];
+    /* VT3_TRACE_AUDIO=1 logs once a second: buffers playing, peak level, device underruns,
+     * stale blocks, skipped regions and how long the guest waited for the mixer's lock. */
     const int trace = getenv("VT3_TRACE_AUDIO") != NULL;
     /* VT3_DUMP_AUDIO=path writes the mixed output as raw s16 stereo 48 kHz, for analysis. */
     FILE *dump = getenv("VT3_DUMP_AUDIO") ? fopen(getenv("VT3_DUMP_AUDIO"), "wb") : NULL;
     uint64_t window_ns = now_ns();
     int32_t window_peak = 0;
+    uint64_t last_lock_total = 0;
+    uint32_t last_lock_takes = 0;
     for (;;) {
         struct timespec ts = { 0, 4000000 };          /* 4 ms */
         nanosleep(&ts, NULL);
+        vt3_audio *out_dev = g_out;
+        int njobs = 0, ngrave = 0, nact = 0, report = 0;
+        uint32_t frames = 0;
+        int32_t peak = 0;
+        uint64_t now = 0, gap_ms = 0, used_ms = 0, avg_lock_us = 0, max_lock_us = 0;
+        uint32_t takes = 0, skips = 0, skip_ms = 0;
+
         pthread_mutex_lock(&g_mu);
-        uint64_t now = now_ns();
+        now = now_ns();
+        int streaming = vt3_audio_streaming(out_dev);
+        int paused = vt3_audio_is_paused(out_dev);
+        sync_pause_locked(now);
+        if (paused || !streaming) {
+            /* Nothing is coming out of the device. A platform pause freezes the mixer timeline
+             * and the guest play clocks (both shifted forward on resume by sync_pause_locked),
+             * so returning to the game continues the stream where it stopped instead of jumping
+             * by the time spent backgrounded into blocks the writer never produced. With no
+             * device at all there is nothing to continue from, so follow the clock and drop the
+             * audio rather than play it late once a reopen succeeds. */
+            if (!paused) g_mix_next_ns = now;
+            pthread_mutex_unlock(&g_mu);
+            continue;
+        }
         if (now > g_mix_next_ns + 50000000u) {
             g_mix_next_ns = now - 10000000u;
             g_resyncs++;                              /* more than 50 ms behind the read timeline: resync */
         }
         uint64_t due = now > g_mix_next_ns ? (now - g_mix_next_ns) * MIX_RATE / 1000000000u : 0;
-        uint64_t space = vt3_audio_space(g_out) / (MIX_CH * sizeof(int16_t));
-        uint64_t frames = due < space ? due : space;
+        uint64_t space = out_dev ? vt3_audio_space(out_dev) / (MIX_CH * sizeof(int16_t)) : 0;
+        frames = (uint32_t)(due < space ? due : space);
         if (frames > MIX_MAX_FRAMES) frames = MIX_MAX_FRAMES;
         if (frames > 0) {
-            memset(acc, 0, (size_t)frames * MIX_CH * sizeof acc[0]);
-            /* Downward, so a buffer that stops and is removed does not skip the one moved into its slot. */
+            /* Downward, so a buffer that stops and is removed does not skip the one moved into
+             * its slot. The snapshots pin each buffer for the unlocked pass below. */
             for (int i = g_nactive - 1; i >= 0; i--) {
-                if (i < g_nactive) mix_buffer_locked(g_active[i], acc, (uint32_t)frames, g_mix_next_ns);
+                if (i < g_nactive && job_snapshot_locked(g_active[i], &jobs[njobs], g_mix_next_ns)) njobs++;
             }
-            int32_t peak = 0;
+        }
+        pthread_mutex_unlock(&g_mu);
+
+        if (frames > 0) {
+            memset(acc, 0, (size_t)frames * MIX_CH * sizeof acc[0]);
+            for (int k = 0; k < njobs; k++) job_render(&jobs[k], acc, frames);
             for (size_t k = 0; k < (size_t)frames * MIX_CH; k++) {
                 int32_t v = acc[k];
                 out[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
@@ -436,42 +660,94 @@ static void *mix_thread(void *arg)
                 if (-v > peak) peak = -v;
             }
             if (dump) fwrite(out, sizeof(int16_t), (size_t)frames * MIX_CH, dump);
-            vt3_audio_write(g_out, out, (size_t)frames * MIX_CH * sizeof(int16_t));
+            if (out_dev) vt3_audio_write(out_dev, out, (size_t)frames * MIX_CH * sizeof(int16_t));
+
+            pthread_mutex_lock(&g_mu);
+            for (int k = 0; k < njobs; k++) job_commit_locked(&jobs[k]);
+            ngrave = g_ngrave;
+            for (int k = 0; k < ngrave; k++) grave[k] = g_graveyard[k];
+            g_ngrave = 0;
             g_mix_next_ns += frames * 1000000000u / MIX_RATE;
             if (trace) {
                 window_peak = peak > window_peak ? peak : window_peak;
                 if (now - window_ns >= 1000000000u) {
-                    uint64_t space = vt3_audio_space(g_out);
-                    uint64_t used_ms = (g_ring_bytes > space ? g_ring_bytes - space : 0) * 1000u /
-                                       ((uint64_t)MIX_RATE * MIX_CH * sizeof(int16_t));
-                    VT3_INFO("audio: %d playing, peak %d in the last second, underruns %u, ring %llu ms, gap %lld ms, resync %u, t=%llu ms",
-                             g_nactive, (int)window_peak, (unsigned)vt3_audio_underruns(g_out),
-                             (unsigned long long)used_ms,
-                             (long long)((now - g_mix_next_ns) / 1000000u), g_resyncs,
-                             (unsigned long long)(now / 1000000u % 100000u));
-                    for (int i = 0; i < g_nactive; i++) {
+                    report = 1;
+                    uint64_t space_now = out_dev ? vt3_audio_space(out_dev) : 0;
+                    used_ms = (g_ring_bytes > space_now ? g_ring_bytes - space_now : 0) * 1000u /
+                              ((uint64_t)MIX_RATE * MIX_CH * sizeof(int16_t));
+                    gap_ms = (now - g_mix_next_ns) / 1000000u;
+                    /* Per-second lock figures: the total is cumulative, the worst is reset. */
+                    uint64_t lock_total = g_lock_wait_ns - last_lock_total;
+                    last_lock_total = g_lock_wait_ns;
+                    takes = g_lock_takes - last_lock_takes;
+                    last_lock_takes = g_lock_takes;
+                    avg_lock_us = takes ? lock_total / takes / 1000u : 0;
+                    max_lock_us = g_lock_wait_max_ns / 1000u;
+                    g_lock_wait_max_ns = 0;
+                    nact = g_nactive;
+                    for (int i = 0; i < nact; i++) {
                         ds_buffer *b = g_active[i];
+                        mix_trace_stat *s = &stats[i];
                         uint32_t pnow = play_cursor_at(b, now);
                         uint32_t pmix = play_cursor_at(b, g_mix_next_ns);
                         uint32_t behind = (pnow + b->bytes - pmix) % (b->bytes ? b->bytes : 1);
-                        VT3_INFO("audio:   0x%08x %u B %u Hz x%u ch %u bit loop %d playing %d, "
-                                 "locks %u plays %u, below-full gate %u ms, stale %u events at byte %u, "
-                                 "read-behind %u ms",
-                                 b->obj, b->bytes, (unsigned)rd32(b->fmt, 4),
-                                 (unsigned)fmt16(b->fmt, 2), (unsigned)fmt16(b->fmt, 14),
-                                 b->looping, b->playing, b->n_locks, b->n_plays,
-                                 b->mix.dip_frames / (MIX_RATE / 1000u),
-                                 b->mix.stale_events, b->mix.stale_blk * FRESH_BLOCK,
-                                 behind * 1000u / (buf_bps(b) ? buf_bps(b) : 1u));
-                        b->mix.dip_frames = 0;
-                        b->mix.stale_events = 0;
+                        s->obj = b->obj;
+                        s->bytes = b->bytes;
+                        s->rate = rd32(b->fmt, 4);
+                        s->ch = fmt16(b->fmt, 2);
+                        s->bits = fmt16(b->fmt, 14);
+                        s->looping = b->looping;
+                        s->playing = b->playing;
+                        s->locks = b->n_locks;
+                        s->plays = b->n_plays;
+                        s->below_full_ms = b->trace_dip_frames / (MIX_RATE / 1000u);
+                        s->stale_events = b->trace_stale_events;
+                        s->stale_byte = b->trace_stale_blk * FRESH_BLOCK;
+                        s->grace_ms = b->trace_grace_frames / (MIX_RATE / 1000u);
+                        s->skipped = __atomic_load_n(&b->write_skips, __ATOMIC_RELAXED);
+                        uint64_t gb = __atomic_load_n(&b->write_gap_bytes, __ATOMIC_RELAXED);
+                        s->skipped_ms = (uint32_t)(gb * 1000u / (buf_bps(b) ? buf_bps(b) : 1u));
+                        s->behind_ms = behind * 1000u / (buf_bps(b) ? buf_bps(b) : 1u);
+                        b->trace_dip_frames = 0;
+                        b->trace_stale_events = 0;
+                        b->trace_grace_frames = 0;
+                        __atomic_store_n(&b->write_skips, 0, __ATOMIC_RELAXED);
+                        __atomic_store_n(&b->write_gap_bytes, 0, __ATOMIC_RELAXED);
+                        skips += s->skipped;
+                        skip_ms += s->skipped_ms;
                     }
                     window_ns = now;
                     window_peak = 0;
                 }
             }
+            pthread_mutex_unlock(&g_mu);
+            for (int k = 0; k < ngrave; k++) free(grave[k]);
+
+            if (report) {
+                VT3_INFO("audio: %d playing, peak %d in the last second, underruns %u, starved %u, "
+                         "ring %llu ms, gap %lld ms, resync %u, t=%llu ms",
+                         nact, (int)window_peak,
+                         (unsigned)(out_dev ? vt3_audio_underruns(out_dev) : 0u),
+                         (unsigned)(out_dev ? vt3_audio_starved(out_dev) : 0u),
+                         (unsigned long long)used_ms, (long long)gap_ms, g_resyncs,
+                         (unsigned long long)(now / 1000000u % 100000u));
+                VT3_INFO("audio: guest lock: %u takes, avg %llu us, max %llu us; writer skipped %u regions (%u ms)",
+                         takes, (unsigned long long)avg_lock_us, (unsigned long long)max_lock_us,
+                         skips, skip_ms);
+                for (int i = 0; i < nact; i++) {
+                    mix_trace_stat *s = &stats[i];
+                    VT3_INFO("audio:   0x%08x %u B %u Hz x%u ch %u bit loop %d playing %d, "
+                             "locks %u plays %u, below-full gate %u ms, stale %u events at byte %u, "
+                             "grace-held %u ms, writer skipped %u regions (%u ms), read-behind %u ms",
+                             s->obj, s->bytes, s->rate, s->ch, s->bits, s->looping, s->playing,
+                             s->locks, s->plays, s->below_full_ms, s->stale_events, s->stale_byte,
+                             s->grace_ms, s->skipped, s->skipped_ms, s->behind_ms);
+                }
+            }
+        } else {
+            pthread_mutex_unlock(&g_mu);
+            for (int k = 0; k < ngrave; k++) free(grave[k]);
         }
-        pthread_mutex_unlock(&g_mu);
     }
     return NULL;
 }
@@ -545,11 +821,22 @@ void dsound_free(uint32_t kind, void *data)
 {
     if (kind == D3D9_KIND_DSBUFFER) {
         ds_buffer *b = data;
+        int deferred = 0;
         pthread_mutex_lock(&g_mu);
         active_remove_locked(b);
+        b->playing = 0;
+        if (b->pinned) {
+            /* The mixer is reading this buffer with the lock released: it frees the object at
+             * the end of the chunk, so a guest Release never waits for the DSP pass. */
+            b->dead = 1;
+            deferred = 1;
+        } else {
+            bury_locked(b);
+        }
         pthread_mutex_unlock(&g_mu);
-        if (b->storage) HeapFree(GetProcessHeap(), 0, b->storage);
-        free(b->fresh);
+        if (deferred) return;
+        b->storage = 0;
+        b->fresh = NULL;
     }
     free(data);
 }
@@ -674,7 +961,7 @@ HRESULT WINAPI IDirectSound_DuplicateSoundBuffer(GPTR This, GPTR pdsbOriginal, G
         d->volume = src->volume;
         d->pan = src->pan;
         d->freq = src->freq;
-        pthread_mutex_lock(&g_mu);           /* the mixer writes src's pos and clears its fresh flags */
+        guest_lock();                        /* the mixer writes src's pos and clears its fresh flags */
         d->pos = src->pos;
         if (d->fresh && src->fresh) memcpy(d->fresh, src->fresh, (src->bytes + FRESH_BLOCK - 1) / FRESH_BLOCK);
         pthread_mutex_unlock(&g_mu);
@@ -742,8 +1029,9 @@ HRESULT WINAPI IDirectSoundBuffer_GetCurrentPosition(GPTR This, GPTR pdwCurrentP
     ds_buffer *b = buf_of(This);
     if (!b) return DSERR_UNSUPPORTED;
     uint32_t play, write;
-    uint64_t now = now_ns();
-    pthread_mutex_lock(&g_mu);               /* the mixer writes playing/pos */
+    uint64_t now;
+    guest_lock();                            /* the mixer writes playing/pos */
+    now = play_clock(now_ns());
     cursors_at(b, now, &play, &write);
     int playing = b->playing;
     pthread_mutex_unlock(&g_mu);
@@ -801,8 +1089,8 @@ HRESULT WINAPI IDirectSoundBuffer_GetStatus(GPTR This, GPTR pdwStatus)
     ds_buffer *b = buf_of(This);
     if (!b) return DSERR_UNSUPPORTED;
     if (!pdwStatus) return DSERR_INVALIDPARAM;
-    pthread_mutex_lock(&g_mu);
-    int playing = b->playing && !played_out(b, now_ns());
+    guest_lock();
+    int playing = b->playing && !played_out(b, play_clock(now_ns()));
     uint32_t st = (playing ? DSBSTATUS_PLAYING : 0) | (b->looping ? DSBSTATUS_LOOPING : 0);
     pthread_mutex_unlock(&g_mu);
     put32(pdwStatus, st);
@@ -829,8 +1117,8 @@ HRESULT WINAPI IDirectSoundBuffer_Lock(GPTR This, DWORD dwOffset, DWORD dwBytes,
     put32(pdwAudioBytes2, 0);
     uint32_t off = dwOffset, n = dwBytes;
     uint32_t play, write;
-    pthread_mutex_lock(&g_mu);               /* the mixer writes playing/pos */
-    cursors_at(b, now_ns(), &play, &write);
+    guest_lock();                            /* the mixer writes playing/pos */
+    cursors_at(b, play_clock(now_ns()), &play, &write);
     pthread_mutex_unlock(&g_mu);
     if (dwFlags & DSBLOCK_FROMWRITECURSOR) off = write;
     if (dwFlags & DSBLOCK_ENTIREBUFFER) {
@@ -866,15 +1154,18 @@ HRESULT WINAPI IDirectSoundBuffer_Play(GPTR This, DWORD dwReserved1, DWORD dwPri
     if (dsound_trace())
         VT3_INFO("DirectSound: Play 0x%08x (%u bytes, flags 0x%x, pos %u)", (unsigned)This, (unsigned)b->bytes,
                  (unsigned)dwFlags, (unsigned)b->pos);
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
     b->n_plays++;
     b->looping = (dwFlags & DSBPLAY_LOOPING) != 0;
     if (!b->playing) {
+        b->mix_seq++;                        /* a chunk the mixer is rendering is now stale */
         b->playing = 1;
         b->play_base = b->pos;
-        b->play_ns = now_ns();
+        b->play_ns = play_clock(now_ns());
         b->mix.gate = 0;                     /* fade in over the ramp: no click at the start */
         b->mix.last_blk = UINT32_MAX;
+        b->mix.stale = 0;
+        b->mix.grace = VT3_MIX_GRACE_FRAMES; /* just written, so a late write is not expected */
         active_add_locked(b);
     }
     pthread_mutex_unlock(&g_mu);
@@ -889,14 +1180,17 @@ HRESULT WINAPI IDirectSoundBuffer_SetCurrentPosition(GPTR This, DWORD dwNewPosit
     if (dsound_trace())
         VT3_INFO("DirectSound: SetCurrentPosition 0x%08x to %u (playing %d)", (unsigned)This, (unsigned)dwNewPosition,
                  b->playing);
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
+    b->mix_seq++;
     b->pos = dwNewPosition;
     if (b->playing) {
         b->play_base = dwNewPosition;
-        b->play_ns = now_ns();
+        b->play_ns = play_clock(now_ns());
     }
     b->mix.gate = 0;                         /* a position jump starts a fresh fade */
     b->mix.last_blk = UINT32_MAX;
+    b->mix.stale = 0;
+    b->mix.grace = VT3_MIX_GRACE_FRAMES;
     pthread_mutex_unlock(&g_mu);
     return DS_OK;
 }
@@ -910,7 +1204,8 @@ HRESULT WINAPI IDirectSoundBuffer_SetFormat(GPTR This, GPTR pcfxFormat)
     if (!b) return DSERR_UNSUPPORTED;
     const uint8_t *f = pcfxFormat ? d3d9_gmem(pcfxFormat, WFX_BYTES) : NULL;
     if (!f) return DSERR_INVALIDPARAM;
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
+    b->mix_seq++;
     memcpy(b->fmt, f, WFX_BYTES);
     b->freq = rd32(f, 4);
     pthread_mutex_unlock(&g_mu);
@@ -922,7 +1217,7 @@ HRESULT WINAPI IDirectSoundBuffer_SetVolume(GPTR This, INT lVolume)
     ds_buffer *b = buf_of(This);
     if (!b) return DSERR_UNSUPPORTED;
     if (lVolume > DSBVOLUME_MAX || lVolume < DSBVOLUME_MIN) return DSERR_INVALIDPARAM;
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
     b->volume = lVolume;
     pthread_mutex_unlock(&g_mu);
     return DS_OK;
@@ -933,7 +1228,7 @@ HRESULT WINAPI IDirectSoundBuffer_SetPan(GPTR This, INT lPan)
     ds_buffer *b = buf_of(This);
     if (!b) return DSERR_UNSUPPORTED;
     if (lPan > DSBPAN_RIGHT || lPan < DSBPAN_LEFT) return DSERR_INVALIDPARAM;
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
     b->pan = lPan;
     pthread_mutex_unlock(&g_mu);
     return DS_OK;
@@ -943,14 +1238,15 @@ HRESULT WINAPI IDirectSoundBuffer_SetFrequency(GPTR This, DWORD dwFrequency)
 {
     ds_buffer *b = buf_of(This);
     if (!b) return DSERR_UNSUPPORTED;
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
+    b->mix_seq++;
     if (dwFrequency == DSBFREQUENCY_ORIGINAL) dwFrequency = rd32(b->fmt, 4);
     if (dwFrequency < DSBFREQUENCY_MIN || dwFrequency > DSBFREQUENCY_MAX) {
         pthread_mutex_unlock(&g_mu);
         return DSERR_INVALIDPARAM;
     }
-    if (b->playing && !played_out(b, now_ns())) {   /* rebase, or the new rate would move the cursor retroactively */
-        uint64_t now = now_ns();
+    if (b->playing && !played_out(b, play_clock(now_ns()))) {   /* rebase, or the new rate would move the cursor retroactively */
+        uint64_t now = play_clock(now_ns());
         b->play_base = play_cursor_at(b, now);
         b->play_ns = now;
     }
@@ -965,9 +1261,10 @@ HRESULT WINAPI IDirectSoundBuffer_Stop(GPTR This)
     if (!b) return DSERR_UNSUPPORTED;
     if (dsound_trace())
         VT3_INFO("DirectSound: Stop 0x%08x (playing %d)", (unsigned)This, b->playing);
-    pthread_mutex_lock(&g_mu);
+    guest_lock();
     if (b->playing) {
-        b->pos = play_cursor_at(b, now_ns());
+        b->mix_seq++;
+        b->pos = play_cursor_at(b, play_clock(now_ns()));
         b->playing = 0;
         b->looping = 0;                  /* the looping status belongs to the playback that Stop ends */
         active_remove_locked(b);
@@ -980,9 +1277,17 @@ HRESULT WINAPI IDirectSoundBuffer_Unlock(GPTR This, GPTR pvAudioPtr1, DWORD dwAu
                                          DWORD dwAudioBytes2)
 {
     ds_buffer *fb = buf_of(This);
-    if (fb) {                                    /* the game's writes, where the pointers it unlocks say; mark_fresh drops out-of-range offsets */
-        if (pvAudioPtr1 >= fb->storage) mark_fresh(fb, pvAudioPtr1 - fb->storage, dwAudioBytes1);
-        if (pvAudioPtr2 >= fb->storage) mark_fresh(fb, pvAudioPtr2 - fb->storage, dwAudioBytes2);
+    if (fb) {                                    /* the game's writes, where the pointers it unlocks say; both calls drop out-of-range offsets */
+        if (pvAudioPtr1 >= fb->storage) {
+            uint32_t off = pvAudioPtr1 - fb->storage;
+            note_write(fb, off, dwAudioBytes1);
+            mark_fresh(fb, off, dwAudioBytes1);
+        }
+        if (pvAudioPtr2 >= fb->storage) {
+            uint32_t off = pvAudioPtr2 - fb->storage;
+            note_write(fb, off, dwAudioBytes2);
+            mark_fresh(fb, off, dwAudioBytes2);
+        }
     }
     if (dsound_trace() && buf_of(This)) {
         /* Hash of what the game wrote, so repeated chunks show up in the trace. */

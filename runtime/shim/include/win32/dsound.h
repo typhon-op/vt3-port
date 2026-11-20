@@ -106,6 +106,12 @@ HRESULT WINAPI DirectSoundCreate(LPCGUID device, GPTR out_ds, LPUNKNOWN outer);
 #define VT3_MIX_FRESH_BLOCK  256u        /* gate granularity: one flag per 256 bytes */
 #define VT3_MIX_GATE_MAX     32768       /* Q15: full level */
 #define VT3_MIX_RAMP_FRAMES  96u         /* gate ramp length, 2 ms at 48 kHz */
+/* How long the gate may stay open on an unmarked block waiting for a write that is already
+ * under way (3 ms at 48 kHz). The game's writer competes for the guest lock, so it can finish
+ * an Unlock a few output frames after the mixer crossed into the block; without this grace
+ * that costs a full 2 ms fade out and back (the sound is heard as a dip). Once per stale
+ * stretch: a writer that never arrives still closes the gate, so old audio is not replayed. */
+#define VT3_MIX_GRACE_FRAMES 144u
 
 typedef struct ds_mix_state {
     uint64_t phase;      /* Q32 source frame index, absolute from the buffer's start */
@@ -115,6 +121,8 @@ typedef struct ds_mix_state {
     uint32_t stale_events; /* trace: transitions of the gate to closed (cleared by the reader) */
     uint32_t stale_blk;    /* trace: FRESH_BLOCK block where the last stale transition happened */
     int32_t stale;         /* trace: 1 while the gate is closed on stale data */
+    uint32_t grace;        /* frames of late-write grace left in this stale stretch */
+    uint32_t grace_frames; /* trace: output frames the grace kept the gate open (cleared by the reader) */
 } ds_mix_state;
 
 /* Q32 phase step for rate_hz source frames per second against the 48 kHz output. */
@@ -134,5 +142,10 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
                        uint32_t nch, uint32_t bits, uint32_t align, int looping,
                        uint8_t *fresh, uint64_t step_q32, double gl, double gr,
                        ds_mix_state *st);
+
+/* Bytes between where a buffer's previous Unlock ended (last_end) and where this one starts
+ * (off), around a buffer of `bytes`: the region the writer skipped instead of writing. 0 when
+ * this write continues the previous one. Diagnostics only; it never changes what is mixed. */
+uint32_t ds_writer_gap(uint32_t last_end, uint32_t off, uint32_t bytes);
 
 #endif /* VT3_WIN32_DSOUND_H */

@@ -19,6 +19,7 @@ struct vt3_audio {
     size_t frame_bytes;
     _Atomic uint64_t played;
     _Atomic uint32_t underruns;
+    _Atomic uint32_t starved;
     _Atomic int playing;
 };
 
@@ -36,6 +37,8 @@ static void SDLCALL pull_cb(void *userdata, SDL_AudioStream *stream, int additio
              * An empty ring (startup, or after the tone ends) is silence. */
             if (got > 0 && got < want) {
                 atomic_fetch_add(&a->underruns, 1);
+            } else if (got == 0 && want) {
+                atomic_fetch_add(&a->starved, 1);
             }
             atomic_fetch_add(&a->played, got);
         }
@@ -117,6 +120,23 @@ void vt3_audio_set_playing(vt3_audio *a, int playing)
 uint32_t vt3_audio_underruns(const vt3_audio *a)
 {
     return atomic_load(&a->underruns);
+}
+
+uint32_t vt3_audio_starved(const vt3_audio *a)
+{
+    return atomic_load(&a->starved);
+}
+
+/* The desktop build has no platform pause; the mixer's pause path is Android-only. */
+int vt3_audio_streaming(const vt3_audio *a)
+{
+    return a && a->stream != NULL;
+}
+
+int vt3_audio_is_paused(const vt3_audio *a)
+{
+    (void)a;
+    return 0;
 }
 
 size_t vt3_audio_fill_sine(vt3_audio *a, double freq_hz, double *phase,

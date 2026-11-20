@@ -58,6 +58,15 @@ size_t vt3_rb_capacity(const vt3_ringbuf *rb)
     return rb->cap;
 }
 
+void vt3_rb_reset(vt3_ringbuf *rb)
+{
+    if (!rb) return;
+    /* Producer-side only, with the consumer stopped: raising tail to head drops every queued
+     * byte. The counters keep counting up, so wrap arithmetic is unchanged. */
+    size_t h = atomic_load_explicit(&rb->head, memory_order_relaxed);
+    atomic_store_explicit(&rb->tail, h, memory_order_release);
+}
+
 size_t vt3_rb_write(vt3_ringbuf *rb, const void *src, size_t n)
 {
     size_t h = atomic_load_explicit(&rb->head, memory_order_relaxed);

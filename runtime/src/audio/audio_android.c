@@ -2,6 +2,14 @@
  * Audio output on Android through AAudio. A data callback on AAudio's thread drains the ring
  * that the game-side writer fills; an empty or short ring is silence. Same contract as
  * audio_sdl.c (vt3_audio.h).
+ *
+ * Two states matter to the DirectSound mixer, which asks about them through
+ * vt3_audio_streaming() and vt3_audio_is_paused():
+ *   - paused: the platform has no window or the activity is in the background. No sound is
+ *     wanted, and the play clocks must not advance, or returning to the game would jump by the
+ *     time spent away into blocks the writer never produced.
+ *   - not streaming: there is no usable stream (the first open failed, or the device dropped
+ *     it). Recovery keeps trying; a failed reopen is never treated as final.
  */
 #include "vt3/vt3_audio.h"
 #include "vt3/vt3_log.h"
@@ -12,6 +20,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 struct vt3_audio {
     AAudioStream *stream;
@@ -19,12 +28,23 @@ struct vt3_audio {
     vt3_audio_format fmt;
     size_t frame_bytes;
     _Atomic int playing;
-    _Atomic uint32_t underruns;
+    _Atomic int paused;           /* the platform wants no sound (backgrounded, no window) */
+    _Atomic uint32_t underruns;   /* a callback got a partial buffer */
+    _Atomic uint32_t starved;     /* a callback got nothing at all while playback was on */
     _Atomic uint64_t played;
-    _Atomic int lost;            /* set by the error callback: the device dropped the stream */
+    _Atomic int lost;             /* set by the error callback: the device dropped the stream */
+    _Atomic uint32_t reopen_failures;
+    _Atomic uint64_t retry_at_ns; /* a reopen is not attempted before this */
 };
 
 static vt3_audio *g_open;        /* the one open output, for the platform pump's pause/recover */
+
+static uint64_t now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
 
 static aaudio_data_callback_result_t data_callback(AAudioStream *stream, void *user, void *audio,
                                                    int32_t num_frames)
@@ -35,9 +55,13 @@ static aaudio_data_callback_result_t data_callback(AAudioStream *stream, void *u
     size_t got = 0;
     if (atomic_load(&a->playing)) {
         got = vt3_rb_read(a->rb, audio, want);
-        /* Only a partial read counts: the writer fell behind mid-stream.
-         * An empty ring (startup, or after the sound ends) is silence. */
+        /* Only a partial read counts as an underrun: the writer fell behind mid-stream. A
+         * callback that got nothing at all is a starved sink (the mixer is not filling the
+         * ring: paused, or waiting on the writer) and is counted separately, because the two
+         * mean different things when the audio sounds wrong. An empty ring at startup, or
+         * after the sound ends, reads the same way and is counted too. */
         if (got > 0 && got < want) atomic_fetch_add(&a->underruns, 1);
+        else if (got == 0 && want) atomic_fetch_add(&a->starved, 1);
         atomic_fetch_add(&a->played, got);
     }
     if (got < want) memset((uint8_t *)audio + got, 0, want - got);
@@ -57,6 +81,7 @@ static int open_stream(vt3_audio *a)
 {
     vt3_audio_format fmt = a->fmt;
     AAudioStreamBuilder *b = NULL;
+    a->stream = NULL;
     if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) {
         VT3_ERROR("audio: AAudio_createStreamBuilder failed");
         return -1;
@@ -69,7 +94,6 @@ static int open_stream(vt3_audio *a)
     AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
     AAudioStreamBuilder_setDataCallback(b, data_callback, a);
     AAudioStreamBuilder_setErrorCallback(b, error_callback, a);
-    a->stream = NULL;
     aaudio_result_t rc = AAudioStreamBuilder_openStream(b, &a->stream);
     AAudioStreamBuilder_delete(b);
     if (rc != AAUDIO_OK || !a->stream) {
@@ -99,9 +123,16 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
     a->rb = vt3_rb_create(buffer_bytes);
     if (!a->rb) { free(a); return -1; }
     if (open_stream(a) != 0) {
-        vt3_rb_destroy(a->rb);
-        free(a);
-        return -1;
+        /* The output can be busy or not up yet at a cold start (another app holding it, or the
+         * device still settling). Keep the object and let the platform pump retry: failing the
+         * open here would leave the game silent for the whole session. While there is no
+         * stream the mixer drops audio and keeps its timeline on the wall clock. */
+        VT3_WARN("audio: no output yet; the platform pump will retry");
+        atomic_store(&a->lost, 1);
+        atomic_store(&a->retry_at_ns, now_ns() + 250000000u);
+        g_open = a;
+        *out = a;
+        return 0;
     }
     g_open = a;
     *out = a;
@@ -110,23 +141,62 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
 
 void vt3_audio_pause(int paused)
 {
-    if (!g_open || !g_open->stream) return;
-    if (paused) AAudioStream_requestPause(g_open->stream);
-    else AAudioStream_requestStart(g_open->stream);
+    vt3_audio *a = g_open;
+    if (!a) return;
+    atomic_store(&a->paused, paused ? 1 : 0);
+    if (!a->stream) {
+        /* Nothing to pause. Resuming is a good moment to retry an output that never opened. */
+        if (!paused) atomic_store(&a->retry_at_ns, 0);
+        return;
+    }
+    aaudio_result_t rc = paused ? AAudioStream_requestPause(a->stream)
+                                : AAudioStream_requestStart(a->stream);
+    if (rc != AAUDIO_OK)
+        VT3_WARN("audio: %s failed: %s", paused ? "pause" : "restart", AAudio_convertResultToText(rc));
+}
+
+int vt3_audio_streaming(const vt3_audio *a)
+{
+    return a && a->stream && !atomic_load(&a->lost);
+}
+
+int vt3_audio_is_paused(const vt3_audio *a)
+{
+    return a && atomic_load(&a->paused);
 }
 
 void vt3_audio_recover(void)
 {
     vt3_audio *a = g_open;
-    if (!a || !atomic_exchange(&a->lost, 0)) return;
-    VT3_WARN("audio: AAudio stream disconnected; reopening");
+    if (!a) return;
+    if (atomic_load(&a->paused)) return;          /* no output while backgrounded; resume retries */
+    if (a->stream && !atomic_load(&a->lost)) return;
+    uint64_t now = now_ns();
+    if (now < atomic_load(&a->retry_at_ns)) return;
+
+    uint32_t fails = atomic_load(&a->reopen_failures);
+    VT3_WARN("audio: reopening the output (attempt %u)", fails + 1);
+    atomic_store(&a->lost, 0);
     if (a->stream) {
         AAudioStream_requestStop(a->stream);
         AAudioStream_close(a->stream);
+        a->stream = NULL;
     }
-    /* The ring is kept, so the mixer carries on.
-     * shortcut: a failed reopen stays silent for the session; retry here if that shows up. */
-    open_stream(a);
+    /* No consumer is running now, so the ring can be emptied: what it holds was produced for
+     * the stream that just closed, and playing it after the gap would only be stale. */
+    vt3_rb_reset(a->rb);
+    if (open_stream(a) != 0) {
+        fails++;
+        atomic_store(&a->reopen_failures, fails);
+        atomic_store(&a->lost, 1);                /* not final: keep trying */
+        uint32_t ms = fails < 4 ? 250u : 1000u;   /* back off once it keeps failing */
+        atomic_store(&a->retry_at_ns, now + (uint64_t)ms * 1000000u);
+        VT3_WARN("audio: reopen failed (%u so far); retrying in %u ms", fails, ms);
+        return;
+    }
+    atomic_store(&a->reopen_failures, 0);
+    atomic_store(&a->retry_at_ns, 0);
+    VT3_INFO("audio: output reopened after %u failed attempt(s)", fails);
 }
 
 void vt3_audio_close(vt3_audio *a)
@@ -165,6 +235,11 @@ void vt3_audio_set_playing(vt3_audio *a, int playing)
 uint32_t vt3_audio_underruns(const vt3_audio *a)
 {
     return atomic_load(&a->underruns);
+}
+
+uint32_t vt3_audio_starved(const vt3_audio *a)
+{
+    return atomic_load(&a->starved);
 }
 
 size_t vt3_audio_fill_sine(vt3_audio *a, double freq_hz, double *phase, size_t max_frames, int16_t amplitude)
