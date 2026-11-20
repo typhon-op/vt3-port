@@ -11,6 +11,7 @@
 #include "vt3/vt3_platform.h"
 #include "vt3/vt3_touch.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,9 +60,16 @@ static int g_plat_ok;
 #define VT3_GUEST_ENGINE      0x009abe88u
 #define VT3_ENGINE_WIDE_OFF   0x9cu
 
-/* Cap the back buffer height: a 1440p phone panel would otherwise cost about four times the pixels
- * of the game's 1024x768 frame for no visible gain at arm's length. */
-#define VT3_WIDE_MAX_H 1080
+/* Frame size policy. The frame follows the panel by default, so a QHD or 1644p phone renders at its
+ * own resolution rather than at 1080p scaled up; the old 1080 cap is gone and is now only what a
+ * low tier may choose through VT3_RENDER_HEIGHT. The budget exists so a 4K-class panel cannot ask
+ * for a target the GPU or the memory cannot take: 4.5 M pixels is 1440x3120, a 20:9 QHD frame.
+ *   VT3_RENDER_HEIGHT=h  pin the frame height (the launcher's resolution choice)
+ *   VT3_RENDER_SCALE=s   fraction of the panel, 0.4..1.0 (default 1.0 = native)
+ *   VT3_MAX_PIXELS=n     pixel budget for the frame (default 4,500,000; 0 disables)
+ *   VT3_MAX_TARGET=n     hard cap on either dimension (default 4096, above every mobile limit) */
+#define VT3_MAX_PIXELS_DEFAULT 4500000.0
+#define VT3_MAX_TARGET_DEFAULT 4096.0
 
 static void widescreen_enable(void)
 {
@@ -85,21 +93,46 @@ static void widescreen_aspect(int w, int h)
     vt3s_store_u32((GPTR)VT3_GUEST_WIDE_ASPECT, bits);
 }
 
-/* A frame at the display's aspect and a reasonable height, so the renderer fills the screen. */
+static double num_env(const char *name, double def)
+{
+    const char *s = getenv(name);
+    if (!s || !*s) return def;
+    double v = atof(s);
+    return v > 0.0 ? v : def;
+}
+
+/* A frame at the display's aspect: native by default, bounded by the pixel budget and the
+ * per-dimension cap, rounded to even pixels (the blit and the letterbox both prefer it). */
 static void choose_target(int dw, int dh, uint32_t *out_w, uint32_t *out_h){
     if (dw <= 0 || dh <= 0) {
         *out_w = 1024;
         *out_h = 768;
         return;
     }
+    double scale = num_env("VT3_RENDER_SCALE", 1.0);
+    if (scale < 0.4) scale = 0.4;
+    if (scale > 1.0) scale = 1.0;
+    double w = (double)dw * scale, h = (double)dh * scale;
     const char *env = getenv("VT3_RENDER_HEIGHT");
-    int max_h = env ? atoi(env) : VT3_WIDE_MAX_H;
-    int h = dh > max_h ? max_h : dh;
-    if (h < 2) h = 2;
-    int w = (int)(((int64_t)h * dw + dh / 2) / dh);
-    if (w < 2) w = 2;
-    *out_w = (uint32_t)(w & ~1);
-    *out_h = (uint32_t)(h & ~1);
+    if (env && atoi(env) >= 240) {           /* a pinned height wins over the scale */
+        h = atoi(env);
+        w = h * (double)dw / (double)dh;
+    }
+    double max_px = num_env("VT3_MAX_PIXELS", VT3_MAX_PIXELS_DEFAULT);
+    if (w * h > max_px) {
+        double k = sqrt(max_px / (w * h));
+        w *= k;
+        h *= k;
+    }
+    double max_dim = num_env("VT3_MAX_TARGET", VT3_MAX_TARGET_DEFAULT);
+    if (w > max_dim) { h *= max_dim / w; w = max_dim; }
+    if (h > max_dim) { w *= max_dim / h; h = max_dim; }
+    if (h < 2.0) h = 2.0;
+    if (w < 2.0) w = 2.0;
+    *out_w = (uint32_t)((uint32_t)(w + 0.5) & ~1u);
+    *out_h = (uint32_t)((uint32_t)(h + 0.5) & ~1u);
+    VT3_INFO("frame: %ux%u from a %dx%d drawable (scale %.2f, budget %.0f px)",
+             (unsigned)*out_w, (unsigned)*out_h, dw, dh, scale, max_px);
 }
 
 /* Bring up the window and pick the frame size. Returns 0, or -1 when there is no window. */

@@ -535,11 +535,6 @@ static uint16_t declared_samplers(const char *text)
  * to the panel's 120 Hz, and sleeping to a 120 budget on top of it missed vsync slots (Retroid,
  * rotated pairs: 120.0 fps median against 97-105 with the 120 cap). VT3_FPS_CAP overrides, 0 turns
  * the limit off; the launcher's "60 Hz battery saver" shortcut sets it to 60. */
-#ifdef __ANDROID__
-static int g_cap_probe;        /* frames timed so far in this probe, -1 between probes */
-static int g_cap_engaged = 1;  /* the software cap sleeps; off when the panel runs at the cap */
-#endif
-
 static int fps_cap_hz(void)
 {
     static int hz = -1;
@@ -591,7 +586,6 @@ static int create_swapchain(void)
         int32_t rc = set_rate_s ? set_rate_s(g.window, (float)fps_cap_hz(), 1, 1)   /* ALWAYS: switch even if not seamless */
                    : set_rate ? set_rate(g.window, (float)fps_cap_hz(), 1) : -1;
         VT3_INFO("vulkan: panel rate %d Hz requested (%d)", fps_cap_hz(), (int)rc);
-        g_cap_probe = 0;
     }
 #endif
     if (ext.width == 0 || ext.height == 0) return -1;
@@ -1178,11 +1172,13 @@ static int upload_dummy(vk_tex *t, uint32_t px, uint32_t layers)
 
 /* ---- frames ------------------------------------------------------------------ */
 
-/* Per-second diagnostic counters, enabled only by VT3_TRACE_FPS: where frame time goes. */
+/* Per-second diagnostic counters, enabled only by VT3_TRACE_FPS: where frame time goes. The
+ * interval histogram gives p50/p95/max, which is what tells a lock from a lucky median. */
 static struct {
     uint64_t t0, fence_ns, acquire_ns, limit_ns, frames, draws, passes, blits;
     uint64_t asked_ns, slow_frames, max_ns, last_present;
     uint64_t pipes, pipe_ns, submit_ns, record_ns, gpu_ns, gpu_frames;
+    uint32_t hist[128];          /* present interval, milliseconds per bucket */
 } g_stats;
 
 static uint64_t now_ns(void)
@@ -1199,24 +1195,48 @@ static int stats_enabled(void)
     return on;
 }
 
+static uint32_t hist_pct(const uint32_t *hist, uint32_t n, int pct)
+{
+    uint64_t total = 0, want, acc = 0;
+    for (uint32_t i = 0; i < n; i++) total += hist[i];
+    if (!total) return 0;
+    want = (total * (uint64_t)pct + 99) / 100;
+    for (uint32_t i = 0; i < n; i++) {
+        acc += hist[i];
+        if (acc >= want) return i;
+    }
+    return n - 1;
+}
+
 static void stats_log(void)
 {
     if (!stats_enabled()) return;
     uint64_t now = now_ns();
     g_stats.frames++;
+    /* The slow-frame threshold follows the target: a 25 ms frame is healthy under a 30 fps cap and
+     * a stall under 120. Without a cap, 20 ms stays the reference the notes were written against. */
+    uint64_t period = fps_cap_hz() > 0 ? 1000000000ull / (uint64_t)fps_cap_hz() : 0;
+    uint64_t budget = period ? period * 115 / 100 : 20000000ull;
+    if (budget < 18000000ull) budget = 18000000ull;
     if (g_stats.last_present) {
         uint64_t dt = now - g_stats.last_present;
-        if (dt > 20000000ull) g_stats.slow_frames++;
+        uint32_t ms = (uint32_t)(dt / 1000000ull);
+        if (ms > 127) ms = 127;
+        g_stats.hist[ms]++;
+        if (dt > budget) g_stats.slow_frames++;
         if (dt > g_stats.max_ns) g_stats.max_ns = dt;
     }
     g_stats.last_present = now;
     if (!g_stats.t0) g_stats.t0 = now;
     if (now - g_stats.t0 < 1000000000ull) return;
     double n = (double)g_stats.frames;
-    VT3_INFO("vulkan: frames over 20 ms: %u, longest %.1f ms, limiter asked %.2f ms per frame; "
-             "pipelines created %u in %.1f ms; submit %.2f ms per frame; draw recording %.2f ms per frame; "
-             "GPU %.2f ms per frame",
-             (unsigned)g_stats.slow_frames, (double)g_stats.max_ns / 1e6, (double)g_stats.asked_ns / n / 1e6,
+    VT3_INFO("vulkan: frames over budget (%llu ms): %u, longest %.1f ms, interval p50 %u p95 %u max %u ms",
+             (unsigned long long)(budget / 1000000ull), (unsigned)g_stats.slow_frames,
+             (double)g_stats.max_ns / 1e6, hist_pct(g_stats.hist, 128, 50), hist_pct(g_stats.hist, 128, 95),
+             hist_pct(g_stats.hist, 128, 100));
+    VT3_INFO("vulkan: limiter asked %.2f ms per frame; pipelines created %u in %.1f ms; submit %.2f ms per frame; "
+             "draw recording %.2f ms per frame; GPU %.2f ms per frame",
+             (double)g_stats.asked_ns / n / 1e6,
              (unsigned)g_stats.pipes, (double)g_stats.pipe_ns / 1e6, (double)g_stats.submit_ns / n / 1e6,
              (double)g_stats.record_ns / n / 1e6,
              g_stats.gpu_frames ? (double)g_stats.gpu_ns / (double)g_stats.gpu_frames / 1e6 : 0.0);
@@ -2001,54 +2021,35 @@ static void vk_draw_program_impl(const vt3_draw *d)
 static void frame_limit(void)
 {
     static long long period_ns = -1;
-    static uint64_t last_ns;
+    static uint64_t lead_ns, next_ns;
     if (period_ns < 0) {
         int hz = fps_cap_hz();
         period_ns = hz > 0 ? 1000000000ll / hz : 0;
 #ifdef __ANDROID__
         /* Wake 1 ms early and let FIFO hold the present to its vsync: a sleep that overshoots
          * by a hair would otherwise miss the slot and drop to the next one. */
-        if (period_ns > 2000000) period_ns -= 1000000;
+        lead_ns = period_ns > 2000000 ? 1000000ull : (uint64_t)period_ns / 4;
+#else
+        lead_ns = 0;
 #endif
     }
     if (!period_ns) return;
-#ifdef __ANDROID__
-    /* When the panel honours the rate request, FIFO alone paces the game exactly (Retroid: 60.1 fps
-     * median, min 58.5); the sleep on top of it drops frames (56-57 median). So time the first 120
-     * frames unlimited and sleep only if they ran faster than the cap. Re-probe every 600 frames,
-     * as the panel can switch late or the probe can land on a slow loading screen. */
-    static uint64_t probe_t0;
-    static int since_probe;
-    if (g_cap_probe < 0 && ++since_probe >= 600) since_probe = 0, g_cap_probe = 0;
-    if (g_cap_probe >= 0) {
-        struct timespec pt;
-        clock_gettime(CLOCK_MONOTONIC, &pt);
-        uint64_t t = (uint64_t)pt.tv_sec * 1000000000ull + (uint64_t)pt.tv_nsec;
-        if (g_cap_probe == 0) probe_t0 = t;
-        if (++g_cap_probe <= 120) return;
-        g_cap_engaged = (t - probe_t0) / 120 < (uint64_t)period_ns * 9 / 10;
-        VT3_DEBUG("vulkan: %.1f fps unlimited, software cap %s", 120e9 / (double)(t - probe_t0),
-                 g_cap_engaged ? "on" : "off (the panel paces)");
-        g_cap_probe = -1;
-        last_ns = 0;
-    }
-    if (!g_cap_engaged) return;
-#endif
+    /* Absolute schedule: frame n is due at t0 + n*period, so pacing does not drift with the
+     * duration of the previous frame and a jittery frame does not push the next one late. After a
+     * stall (a load, the window returning) the schedule resyncs instead of sprinting to catch up. */
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-    if (last_ns) {
-        uint64_t elapsed = now - last_ns;
-        if (elapsed < (uint64_t)period_ns) {
-            uint64_t wait = (uint64_t)period_ns - elapsed;
-            if (stats_enabled()) g_stats.asked_ns += wait;
-            ts.tv_sec = (time_t)(wait / 1000000000ull);
-            ts.tv_nsec = (long)(wait % 1000000000ull);
-            nanosleep(&ts, NULL);
-            now += wait;
-        }
+    if (!next_ns || now > next_ns + (uint64_t)period_ns) next_ns = now;
+    uint64_t target = next_ns > lead_ns ? next_ns - lead_ns : 0;
+    if (now < target) {
+        uint64_t wait = target - now;
+        if (stats_enabled()) g_stats.asked_ns += wait;
+        ts.tv_sec = (time_t)(wait / 1000000000ull);
+        ts.tv_nsec = (long)(wait % 1000000000ull);
+        nanosleep(&ts, NULL);
     }
-    last_ns = now;
+    next_ns += (uint64_t)period_ns;
 }
 
 static int recreate_swapchain(void)
