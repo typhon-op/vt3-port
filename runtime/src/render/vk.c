@@ -36,6 +36,7 @@
 #include <vulkan/vulkan.h>
 
 #include "vt3/vt3_builtin.h"
+#include "vt3/vt3_diag.h"
 #include "vt3/vt3_log.h"
 #include "vt3/vt3_platform.h"
 #include "vt3/vt3_renderer.h"
@@ -75,7 +76,8 @@
     do {                                                                 \
         VkResult r_ = (expr);                                            \
         if (r_ != VK_SUCCESS) {                                          \
-            VT3_ERROR("vulkan: %s failed (%d)", (what), (int)r_);        \
+            VT3_CERROR("vulkan", (int)r_, "%s failed (%d)", (what), (int)r_); \
+            vt3_diag_vulkan_error();                                     \
             return -1;                                                   \
         }                                                                \
     } while (0)
@@ -652,8 +654,10 @@ static int create_swapchain(void)
     for (uint32_t i = 0; i < g.nsc; i++) {
         if (!g.sc_done[i]) VKT(vkCreateSemaphore(g.dev, &sem, NULL, &g.sc_done[i]), "semaphore");
     }
-    VT3_INFO("vulkan: swapchain %ux%u, format %d, %u images, present mode %d", ext.width, ext.height,
-             (int)pick.format, (unsigned)g.nsc, (int)g.present_mode);
+    VT3_CINFO("vulkan", "swapchain %ux%u, format %d, %u images, present mode %d", ext.width, ext.height,
+              (int)pick.format, (unsigned)g.nsc, (int)g.present_mode);
+    vt3_diag_render_size(g.logical_w, g.logical_h);
+    vt3_diag_window_size((int)ext.width, (int)ext.height);
     return 0;
 }
 
@@ -2270,6 +2274,17 @@ static void vk_present(const vt3_rect *dst, int nearest, int drawable_w, int dra
     policy_poll();
     frame_limit();
     if (stats_enabled()) g_stats.limit_ns += now_ns() - lt0;
+    /* Always-on frame pacing for the diagnostics report: the interval since the previous
+     * presented frame, capped so a resume from background does not read as one 40 s frame. */
+    {
+        static uint64_t last_present_ns;
+        uint64_t tn = now_ns();
+        if (last_present_ns) {
+            uint64_t dt = tn - last_present_ns;
+            if (dt < 2000000000ull) vt3_diag_frame(dt);
+        }
+        last_present_ns = tn;
+    }
     stats_log();
 }
 
@@ -2516,8 +2531,29 @@ static int vk_init(int logical_w, int logical_h)
                   (unsigned long long)lim.minUniformBufferOffsetAlignment);
         return -1;
     }
-    VT3_INFO("vulkan: %s, API %u.%u", props.deviceName, VK_VERSION_MAJOR(props.apiVersion),
-             VK_VERSION_MINOR(props.apiVersion));
+    VT3_CINFO("vulkan", "%s, API %u.%u", props.deviceName, VK_VERSION_MAJOR(props.apiVersion),
+              VK_VERSION_MINOR(props.apiVersion));
+    /* What the diagnostic report shows under graphics: the adapter, the API and the instance
+     * extensions this build of the renderer was given. */
+    {
+        static char ext_list[512];
+        if (!ext_list[0]) {
+            uint32_t n = 0;
+            vkEnumerateInstanceExtensionProperties(NULL, &n, NULL);
+            VkExtensionProperties *all = n ? calloc(n, sizeof *all) : NULL;
+            if (all) {
+                if (vkEnumerateInstanceExtensionProperties(NULL, &n, all) == VK_SUCCESS) {
+                    size_t used = 0;
+                    for (uint32_t i = 0; i < n && used + 40 < sizeof ext_list; i++)
+                        used += (size_t)snprintf(ext_list + used, sizeof ext_list - used, "%s%s",
+                                                 used ? "," : "", all[i].extensionName);
+                }
+                free(all);
+            }
+        }
+        vt3_diag_gpu(props.vendorID, props.deviceName, props.apiVersion, ext_list);
+    }
+    vt3_diag_render_size(g.logical_w, g.logical_h);
     if (stats_enabled() && qf[found].timestampValidBits && props.limits.timestampPeriod > 0.0f) {
         VkQueryPoolCreateInfo qci2 = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         qci2.queryType = VK_QUERY_TYPE_TIMESTAMP;

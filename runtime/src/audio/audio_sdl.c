@@ -139,6 +139,21 @@ int vt3_audio_is_paused(const vt3_audio *a)
     return 0;
 }
 
+/* The desktop build reports its stream so the diagnostics code links and the host tests can
+ * exercise it; there is no reopen path or platform pause here. */
+int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
+{
+    if (!a || !out) return 0;
+    memset(out, 0, sizeof *out);
+    out->open = 1;
+    out->streaming = vt3_audio_streaming(a);
+    out->channels = a->fmt.channels;
+    out->sample_rate = a->fmt.sample_rate;
+    out->underruns = atomic_load(&a->underruns);
+    out->starved = atomic_load(&a->starved);
+    return 1;
+}
+
 size_t vt3_audio_fill_sine(vt3_audio *a, double freq_hz, double *phase,
                            size_t max_frames, int16_t amplitude)
 {

@@ -3,6 +3,7 @@
  * platform layer and runs the translated game on this thread. The game's data and image come from
  * VT3_ANDROID_ROOT (device storage, pushed with adb), so nothing is bundled in the APK.
  */
+#include "vt3/vt3_diag.h"
 #include "vt3/vt3_log.h"
 #include "vt3/vt3_platform.h"
 #include "vt3rt.h"
@@ -43,7 +44,7 @@ static void apply_env_file(const char *path)
         while (n && (val[n - 1] == '\n' || val[n - 1] == '\r' || val[n - 1] == ' ' || val[n - 1] == '\t'))
             val[--n] = 0;
         if (getenv(s) == NULL) setenv(s, val, 0);
-        VT3_INFO("android: env %s=%s", s, getenv(s));
+        VT3_CINFO("app", "env %s=%s", s, getenv(s));
     }
     fclose(f);
 }
@@ -85,13 +86,14 @@ static void set_int_env(const char *name, int v)
     char val[16];
     snprintf(val, sizeof val, "%d", v);
     if (getenv(name) == NULL) setenv(name, val, 0);
-    VT3_INFO("android: %s=%s", name, val);
+    VT3_CINFO("settings", "%s=%s", name, val);
 }
 
 static void apply_settings(void)
 {
     /* The render thread polls this directory for the thermal status and the anisotropy cap. */
     setenv("VT3_SETTINGS_DIR", VT3_ANDROID_ROOT, 1);
+    VT3_CDEBUG("settings", "reading settings markers from %s", VT3_ANDROID_ROOT);
     int fps = marker_int("fps_cap", -1);
     if (fps < 0 && access(VT3_ANDROID_ROOT "/fps60", F_OK) == 0) fps = 60;  /* older shortcut */
     if (fps >= 0) set_int_env("VT3_FPS_CAP", fps);
@@ -106,6 +108,19 @@ static void apply_settings(void)
         if (getenv("VT3_RENDER_SCALE") == NULL) setenv("VT3_RENDER_SCALE", val, 0);
         VT3_INFO("android: VT3_RENDER_SCALE=%s", val);
     }
+}
+
+/* Diagnostics come up before anything else, so a failure in the rest of start-up is recorded. The
+ * setup screen writes the diag_detail marker when the player turns detailed logging on; the
+ * environment still wins, as with every other switch here. */
+static void start_diagnostics(void)
+{
+    char marker[256];
+    snprintf(marker, sizeof marker, "%s/diag_detail", VT3_ANDROID_ROOT);
+    if (access(marker, F_OK) == 0) setenv("VT3_LOG_DETAIL", "1", 0);
+    vt3_diag_start(VT3_ANDROID_ROOT, "0.2.0");
+    VT3_CINFO("app", "VT3 Android 0.2.0 starting; data root %s; detailed logging %s",
+              VT3_ANDROID_ROOT, getenv("VT3_LOG_DETAIL") ? "on" : "off");
 }
 
 static int dir_ok(const char *p)
@@ -135,10 +150,10 @@ static void apply_game_root(void)
     }
     if (chosen[0] == '/' && dir_ok(chosen)) {
         setenv("VT3_GAME_ROOT", chosen, 1);
-        VT3_INFO("android: game data at %s (chosen in setup)", chosen);
+        VT3_CINFO("app", "game data at %s (chosen in setup)", chosen);
         return;
     }
-    if (chosen[0]) VT3_INFO("android: %s is not readable, using app storage", chosen);
+    if (chosen[0]) VT3_CWARN("app", "%s is not readable, using app storage", chosen);
     setenv("VT3_GAME_ROOT", VT3_ANDROID_ROOT "/data2", 1);
 }
 
@@ -151,15 +166,17 @@ void android_main(struct android_app *app)
     vt3_platform_android_attach(app);
     apply_env_file(VT3_ANDROID_ROOT "/vt3.env");
     apply_settings();
+    start_diagnostics();
     /* Full screen: the game draws over the whole panel, with no status bar (the activity has no Java). */
     ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_FULLSCREEN, 0);
     /* Game data: <root>/data2 by default (the extracted English archive set), or the folder setup
      * recorded in <root>/game_root; <root>/image.bin is always the image. */
     apply_game_root();
     setenv("VT3_SHADER_PACK", VT3_ANDROID_ROOT "/shaders.pack", 1);
-    VT3_INFO("android: running the game from %s", VT3_ANDROID_ROOT);
+    VT3_CINFO("app", "running the game from %s", VT3_ANDROID_ROOT);
     int rc = vt3_run(&vt3_mod, VT3_ANDROID_ROOT "/image.bin");
-    VT3_INFO("android: game returned %d", rc);
+    VT3_CINFO("app", "game returned %d; shutting down", rc);
+    vt3_diag_stop();
     /* Close the activity and end the process, so a relaunch never runs over stale statics. */
     ANativeActivity_finish(app->activity);
     while (!app->destroyRequested) {

@@ -14,6 +14,7 @@
  * stream rather than jumping into content the writer never produced while the app was away.
  */
 #include "vt3/vt3_audio.h"
+#include "vt3/vt3_diag.h"
 #include "vt3/vt3_log.h"
 #include "vt3/vt3_platform.h"
 
@@ -92,7 +93,9 @@ void vt3_platform_android_cmd(struct android_app *app, int32_t cmd)
         g_window = app->window;
         if (g_window) {
             int w = ANativeWindow_getWidth(g_window), h = ANativeWindow_getHeight(g_window);
-            VT3_INFO("android: window %dx%d", w, h);
+            VT3_CINFO("lifecycle", "window created %dx%d", w, h);
+            vt3_diag_event("window_create");
+            vt3_diag_window_size(w, h);
             /* The renderer rebuilds its swapchain when it sees a new window, and this tells the
              * game-side frame code the drawable changed as well. */
             push_event(VT3_EV_RESIZE, w, h);
@@ -100,6 +103,8 @@ void vt3_platform_android_cmd(struct android_app *app, int32_t cmd)
         apply_audio_state();
         break;
     case APP_CMD_TERM_WINDOW:
+        VT3_CINFO("lifecycle", "window destroyed");
+        vt3_diag_event("window_destroy");
         g_window = NULL;
         apply_audio_state();
         vt3_touch_release_all();          /* no surface: drop anything the controls held */
@@ -108,25 +113,40 @@ void vt3_platform_android_cmd(struct android_app *app, int32_t cmd)
     case APP_CMD_WINDOW_RESIZED:
     case APP_CMD_CONFIG_CHANGED:
         if (g_window) {
-            push_event(VT3_EV_RESIZE, ANativeWindow_getWidth(g_window), ANativeWindow_getHeight(g_window));
+            int w = ANativeWindow_getWidth(g_window), h = ANativeWindow_getHeight(g_window);
+            VT3_CINFO("lifecycle", "%s %dx%d",
+                      cmd == APP_CMD_WINDOW_RESIZED ? "window resized" : "configuration changed", w, h);
+            vt3_diag_event(cmd == APP_CMD_WINDOW_RESIZED ? "window_resize" : "config_change");
+            vt3_diag_window_size(w, h);
+            push_event(VT3_EV_RESIZE, w, h);
         }
         break;
     case APP_CMD_GAINED_FOCUS:
+        VT3_CINFO("lifecycle", "focus gained");
+        vt3_diag_event("focus_gain");
         push_event(VT3_EV_FOCUS, 0, 0);
         break;
     case APP_CMD_LOST_FOCUS:
+        VT3_CINFO("lifecycle", "focus lost");
+        vt3_diag_event("focus_loss");
         vt3_touch_release_all();
         push_event(VT3_EV_BLUR, 0, 0);
         break;
     case APP_CMD_PAUSE:
+        VT3_CINFO("lifecycle", "activity paused");
+        vt3_diag_event("pause");
         g_paused = 1;
         apply_audio_state();
         break;
     case APP_CMD_RESUME:
+        VT3_CINFO("lifecycle", "activity resumed");
+        vt3_diag_event("resume");
         g_paused = 0;
         apply_audio_state();              /* a no-op until the window comes back */
         break;
     case APP_CMD_DESTROY:
+        VT3_CINFO("lifecycle", "activity destroyed");
+        vt3_diag_event("destroy");
         g_quit = 1;
         g_paused = 1;
         vt3_audio_pause(1);               /* no burst of sound while the app is torn down */
@@ -221,6 +241,7 @@ int vt3_platform_pump_events(void)
         if (!g_quit) apply_audio_state();
     }
     vt3_audio_recover();                      /* retries a failed open/reopen with a backoff */
+    vt3_diag_tick();                          /* at most one metrics snapshot a second */
     return !g_quit;
 }
 

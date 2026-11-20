@@ -54,6 +54,7 @@ public class ThermalWatch extends Service implements PowerManager.OnThermalStatu
     }
 
     private void write(int status) {
+        DiagLog.i("thermal", "status " + status + " (" + GraphicsProfile.thermalName(status) + ")");
         File f = new File(getExternalFilesDir(null), "thermal");
         try (FileOutputStream out = new FileOutputStream(f)) {
             out.write(Integer.toString(status).getBytes("UTF-8"));

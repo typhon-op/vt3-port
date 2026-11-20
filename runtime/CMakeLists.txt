@@ -49,6 +49,7 @@ endif()
 # Platform layer, renderer, audio, input, and the ADX decoder.
 set(VT3_CORE_COMMON
     src/core/log.c
+    src/core/diag.c
     src/core/guest.c
     src/render/letterbox.c
     src/render/sm2_glsl.c
@@ -63,6 +64,7 @@ if(VT3_ANDROID)
     set(VT3_CORE_PLATFORM
         src/audio/audio_android.c
         src/input/input_android.c
+        src/platform/android_jni.c
         src/platform/platform_android.c
         src/render/vk.c
     )

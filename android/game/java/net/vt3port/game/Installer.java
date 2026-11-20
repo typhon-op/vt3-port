@@ -59,7 +59,7 @@ public class Installer extends Activity {
     File root;
     Uri iso, zip, sourceTree;
     File sourceDir, destDir;
-    Button isoButton, zipButton, installButton, storageButton, sourceButton, destButton;
+    Button isoButton, zipButton, installButton, storageButton, sourceButton, destButton, diagnosticsButton;
     TextView isoState, exeState, status, storageState, sourceState, destState;
     ProgressBar bar;
     static final Handler ui = new Handler(Looper.getMainLooper());
@@ -72,7 +72,10 @@ public class Installer extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         root = getExternalFilesDir(null);
+        DiagLog.i("install", "setup screen opened; data root " + root);
         if (new File(root, "install.ok").exists()) {
+            DiagLog.i("install", "already installed; starting the game");
+            DiagLog.i("storage", "all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
             launch();
             return;
         }
@@ -87,6 +90,7 @@ public class Installer extends Activity {
         storageButton = findViewById(R.id.storage_button);
         sourceButton = findViewById(R.id.source_button);
         destButton = findViewById(R.id.dest_button);
+        diagnosticsButton = findViewById(R.id.diagnostics_button);
         storageState = findViewById(R.id.storage_state);
         sourceState = findViewById(R.id.source_state);
         destState = findViewById(R.id.dest_state);
@@ -96,6 +100,7 @@ public class Installer extends Activity {
         storageButton.setOnClickListener(v -> askAllFiles());
         sourceButton.setOnClickListener(v -> pickSource());
         destButton.setOnClickListener(v -> pickDestination());
+        diagnosticsButton.setOnClickListener(v -> startActivity(new Intent(this, Diagnostics.class)));
         /* A remembered folder can be gone: unmounted card, app data cleared, folder deleted. */
         sourceDir = StorageAccess.sourcePath(this);
         if (sourceDir != null && !StorageAccess.looksInstalled(sourceDir)) {
@@ -215,6 +220,7 @@ public class Installer extends Activity {
             return;
         }
         StorageAccess.markAsked(this);
+        DiagLog.i("storage", "opening the all-files access settings screen");
         try {
             startActivity(StorageAccess.settings(this));
             status.setText(R.string.storage_howto);
@@ -312,6 +318,12 @@ public class Installer extends Activity {
         destButton.setEnabled(false);
         bar.setVisibility(View.VISIBLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        DiagLog.i("install", "install started; destination "
+                + (destDir != null ? destDir.getAbsolutePath() : root.getAbsolutePath())
+                + "; source " + (sourceDir != null ? sourceDir.getAbsolutePath()
+                : sourceTree != null ? sourceTree.toString()
+                : iso != null ? iso.toString() : "none")
+                + "; all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
         new Thread(() -> {
             try {
                 /* Everything below works on real paths. Prove each one is usable before touching it. */
@@ -347,9 +359,11 @@ public class Installer extends Activity {
                 if (!new File(data2, "Resource").isDirectory())
                     throw new IOException(getString(R.string.install_bad));
                 writeGameRoot(base, data2);
+                DiagLog.i("install", "game data complete at " + data2.getAbsolutePath());
                 try (FileOutputStream o = new FileOutputStream(new File(root, "install.ok"))) { o.getFD().sync(); }
                 ui.post(() -> { busy = false; Installer a = live; if (a != null) a.launch(); });
             } catch (Throwable e) { /* an Error (OutOfMemoryError) must not kill the thread silently */
+                DiagLog.e("install", 0, "install failed", e);
                 ui.post(() -> {
                     busy = false;
                     Installer a = live;
@@ -480,6 +494,7 @@ public class Installer extends Activity {
     }
 
     void launch() {
+        DiagLog.i("app", "launching the game");
         /* An update can ship a new shader pack (it is keyed to the shader translator), so refresh it. */
         try {
             long stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;

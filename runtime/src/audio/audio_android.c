@@ -12,6 +12,7 @@
  *     it). Recovery keeps trying; a failed reopen is never treated as final.
  */
 #include "vt3/vt3_audio.h"
+#include "vt3/vt3_diag.h"
 #include "vt3/vt3_log.h"
 
 #include <aaudio/AAudio.h>
@@ -83,7 +84,8 @@ static int open_stream(vt3_audio *a)
     AAudioStreamBuilder *b = NULL;
     a->stream = NULL;
     if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) {
-        VT3_ERROR("audio: AAudio_createStreamBuilder failed");
+        VT3_CERROR("audio", (int)AAUDIO_ERROR_INTERNAL, "AAudio_createStreamBuilder failed");
+        vt3_diag_counter("audio_open_failures", 1);
         return -1;
     }
     AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
@@ -97,19 +99,22 @@ static int open_stream(vt3_audio *a)
     aaudio_result_t rc = AAudioStreamBuilder_openStream(b, &a->stream);
     AAudioStreamBuilder_delete(b);
     if (rc != AAUDIO_OK || !a->stream) {
-        VT3_ERROR("audio: AAudio open failed: %s", AAudio_convertResultToText(rc));
+        VT3_CERROR("audio", (int)rc, "AAudio open failed: %s", AAudio_convertResultToText(rc));
+        vt3_diag_counter("audio_open_failures", 1);
         a->stream = NULL;
         return -1;
     }
     rc = AAudioStream_requestStart(a->stream);
     if (rc != AAUDIO_OK) {
-        VT3_ERROR("audio: AAudio start failed: %s", AAudio_convertResultToText(rc));
+        VT3_CERROR("audio", (int)rc, "AAudio start failed: %s", AAudio_convertResultToText(rc));
+        vt3_diag_counter("audio_open_failures", 1);
         AAudioStream_close(a->stream);
         a->stream = NULL;
         return -1;
     }
-    VT3_INFO("audio: %u Hz, %d ch, S16 (AAudio), ring %zu bytes, device burst %d frames",
-             fmt.sample_rate, fmt.channels, vt3_rb_capacity(a->rb), AAudioStream_getFramesPerBurst(a->stream));
+    VT3_CINFO("audio", "%u Hz, %d ch, S16 (AAudio), ring %zu bytes, device burst %d frames",
+              fmt.sample_rate, fmt.channels, vt3_rb_capacity(a->rb),
+              AAudioStream_getFramesPerBurst(a->stream));
     return 0;
 }
 
@@ -127,14 +132,16 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
          * device still settling). Keep the object and let the platform pump retry: failing the
          * open here would leave the game silent for the whole session. While there is no
          * stream the mixer drops audio and keeps its timeline on the wall clock. */
-        VT3_WARN("audio: no output yet; the platform pump will retry");
+        VT3_CWARN("audio", "no output yet; the platform pump will retry");
         atomic_store(&a->lost, 1);
         atomic_store(&a->retry_at_ns, now_ns() + 250000000u);
         g_open = a;
+        vt3_diag_bind_audio(a);
         *out = a;
         return 0;
     }
     g_open = a;
+    vt3_diag_bind_audio(a);
     *out = a;
     return 0;
 }
@@ -152,7 +159,11 @@ void vt3_audio_pause(int paused)
     aaudio_result_t rc = paused ? AAudioStream_requestPause(a->stream)
                                 : AAudioStream_requestStart(a->stream);
     if (rc != AAUDIO_OK)
-        VT3_WARN("audio: %s failed: %s", paused ? "pause" : "restart", AAudio_convertResultToText(rc));
+        VT3_CWARN("audio", "%s failed: %s", paused ? "pause" : "restart",
+                  AAudio_convertResultToText(rc));
+    else
+        VT3_CINFO("audio", "output %s", paused ? "paused" : "resumed");
+    vt3_diag_counter(paused ? "audio_pauses" : "audio_resumes", 1);
 }
 
 int vt3_audio_streaming(const vt3_audio *a)
@@ -175,7 +186,8 @@ void vt3_audio_recover(void)
     if (now < atomic_load(&a->retry_at_ns)) return;
 
     uint32_t fails = atomic_load(&a->reopen_failures);
-    VT3_WARN("audio: reopening the output (attempt %u)", fails + 1);
+    VT3_CWARN("audio", "reopening the output (attempt %u)", fails + 1);
+    vt3_diag_counter("audio_reopen_attempts", 1);
     atomic_store(&a->lost, 0);
     if (a->stream) {
         AAudioStream_requestStop(a->stream);
@@ -184,6 +196,8 @@ void vt3_audio_recover(void)
     }
     /* No consumer is running now, so the ring can be emptied: what it holds was produced for
      * the stream that just closed, and playing it after the gap would only be stale. */
+    size_t stale = vt3_rb_used(a->rb);
+    if (stale) vt3_diag_counter("audio_stale_resets", 1);
     vt3_rb_reset(a->rb);
     if (open_stream(a) != 0) {
         fails++;
@@ -191,18 +205,38 @@ void vt3_audio_recover(void)
         atomic_store(&a->lost, 1);                /* not final: keep trying */
         uint32_t ms = fails < 4 ? 250u : 1000u;   /* back off once it keeps failing */
         atomic_store(&a->retry_at_ns, now + (uint64_t)ms * 1000000u);
-        VT3_WARN("audio: reopen failed (%u so far); retrying in %u ms", fails, ms);
+        VT3_CWARN("audio", "reopen failed (%u so far); retrying in %u ms", fails, ms);
+        vt3_diag_counter("audio_reopen_failures_total", 1);
         return;
     }
     atomic_store(&a->reopen_failures, 0);
     atomic_store(&a->retry_at_ns, 0);
-    VT3_INFO("audio: output reopened after %u failed attempt(s)", fails);
+    VT3_CINFO("audio", "output reopened after %u failed attempt(s); %zu stale bytes dropped",
+              fails, stale);
+}
+
+int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
+{
+    if (!a || !out) return 0;
+    memset(out, 0, sizeof *out);
+    out->open = 1;
+    out->streaming = vt3_audio_streaming(a);
+    out->paused = vt3_audio_is_paused(a);
+    out->channels = a->fmt.channels;
+    out->sample_rate = a->fmt.sample_rate;
+    out->underruns = atomic_load(&a->underruns);
+    out->starved = atomic_load(&a->starved);
+    out->reopen_failures = atomic_load(&a->reopen_failures);
+    return 1;
 }
 
 void vt3_audio_close(vt3_audio *a)
 {
     if (!a) return;
-    if (a == g_open) g_open = NULL;
+    if (a == g_open) {
+        g_open = NULL;
+        vt3_diag_bind_audio(NULL);
+    }
     if (a->stream) {
         AAudioStream_requestStop(a->stream);
         AAudioStream_close(a->stream);

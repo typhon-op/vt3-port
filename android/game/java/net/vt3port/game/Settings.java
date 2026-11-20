@@ -42,6 +42,7 @@ public class Settings extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         root = getExternalFilesDir(null);
+        DiagLog.i("settings", "settings screen opened");
         /* Effective values reflect the tier and the current thermal status before anything is shown. */
         GraphicsProfile.apply(this, root);
 
@@ -76,6 +77,7 @@ public class Settings extends Activity {
 
         preset.setOnItemSelectedListener(new Pick() {
             void take(int i) {
+                DiagLog.i("graphics", "preset " + GraphicsProfile.PRESET_IDS[i]);
                 GraphicsProfile.write(root, "preset", GraphicsProfile.PRESET_IDS[i]);
                 GraphicsProfile.write(root, "override_fps", null);   /* a preset is a fresh set of defaults */
                 GraphicsProfile.write(root, "override_res", null);
@@ -104,6 +106,7 @@ public class Settings extends Activity {
         Button apply = new Button(this);
         apply.setText(R.string.settings_restart);
         apply.setOnClickListener(v -> {
+            DiagLog.i("settings", "applying graphics settings and restarting the game");
             GraphicsProfile.apply(this, root);
             ThermalWatch.start(this);
             startActivity(new Intent(this, android.app.NativeActivity.class));
@@ -115,6 +118,11 @@ public class Settings extends Activity {
         restartNote.setText(R.string.settings_note);
         restartNote.setTextColor(getColor(R.color.vt3_muted));
         box.addView(restartNote);
+
+        Button diagnostics = new Button(this);
+        diagnostics.setText(R.string.settings_diagnostics);
+        diagnostics.setOnClickListener(v -> startActivity(new Intent(this, Diagnostics.class)));
+        box.addView(diagnostics);
 
         setContentView(scroll);
     }
@@ -158,6 +166,7 @@ public class Settings extends Activity {
     }
 
     void override(String name, int value) {
+        DiagLog.i("graphics", name + "=" + value);
         GraphicsProfile.write(root, name, value < 0 ? null : Integer.toString(value));
         GraphicsProfile.apply(this, root);
     }

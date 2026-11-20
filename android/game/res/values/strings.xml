@@ -67,4 +67,34 @@
     <string name="settings_individual">A preset only fills in defaults: each option above can be changed on its own. Auto follows the device tier and the thermal status. The game\'s own graphics options are untouched.</string>
     <string name="settings_restart">Apply and restart</string>
     <string name="settings_note">Resolution and frame rate are set when the renderer starts, so this relaunches the game. Press Back to close without applying.</string>
+    <string name="settings_diagnostics">Diagnostics</string>
+
+    <!-- Diagnostics: logs, the TXT report, and the share/save actions. -->
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="diagnostics_hint">The game and this screen write one log on this device: startup, the game engine, the installer, storage, Vulkan, frame times, audio, input and the Android lifecycle. Nothing is uploaded. A report is a plain .txt file you can read, save or share.</string>
+    <string name="diagnostics_detail">Detailed logging (adds debug detail; turn off when done)</string>
+    <string name="diagnostics_state">Version %1$s\nLog size %2$s (%3$s entries, %4$s dropped)\nLast report %5$s\nLast error: %6$s</string>
+    <string name="diagnostics_never">never</string>
+    <string name="diagnostics_no_error">none recorded</string>
+    <string name="diagnostics_view">View logs</string>
+    <string name="diagnostics_generate">Generate diagnostic report</string>
+    <string name="diagnostics_save">Save report as TXT</string>
+    <string name="diagnostics_share">Share report</string>
+    <string name="diagnostics_open">Open last saved report</string>
+    <string name="diagnostics_clear">Clear logs</string>
+    <string name="diagnostics_last_error">View last error</string>
+    <string name="diagnostics_note">The report contains the app version, device model and Android version, the install state, graphics and frame statistics, audio diagnostics, lifecycle events and the error history. It never contains file contents, account details or a location. Clearing logs removes only the log files and crash records, never the game.</string>
+    <string name="diagnostics_no_log">The log is not running.</string>
+    <string name="diagnostics_empty_log">The log is empty.</string>
+    <string name="diagnostics_generated">Report ready: %1$s (%2$d characters).</string>
+    <string name="diagnostics_no_picker">This device has no document picker, so the report cannot be saved.</string>
+    <string name="diagnostics_shared">Sharing a %1$d-byte report.</string>
+    <string name="diagnostics_share_failed">Sharing failed: %1$s</string>
+    <string name="diagnostics_nothing_saved">No report has been saved yet.</string>
+    <string name="diagnostics_no_viewer">No app on this device can open a text file.</string>
+    <string name="diagnostics_clear_ask">Delete the log files, the last-error record and crash records on this device? The game and its data are not touched.</string>
+    <string name="diagnostics_cleared">Logs cleared. The game data was not touched.</string>
+    <string name="diagnostics_save_cancelled">Save cancelled: no file was written.</string>
+    <string name="diagnostics_saved">Report saved and verified: %1$d bytes, readable.</string>
+    <string name="diagnostics_save_failed">The report could not be saved: %1$s</string>
 </resources>

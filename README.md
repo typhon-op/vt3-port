@@ -129,6 +129,34 @@ migration, and explicitly names user-picked files as a case for the Storage Acce
 is not on that list, so a Play build should ship without the `uses-permission` line and rely on the
 picker; the app is designed to work fully that way. This port is side-loaded rather than published.
 
+### Diagnostics
+
+**Settings → Diagnostics** (also reachable from the setup screen) is where a problem gets recorded
+and reported. The app keeps one plain-text log on the device — startup and shutdown, the game engine
+and executable loading, installation and file checks, storage grants and custom paths, Vulkan and
+frame times, audio state and recovery, touch/pad input, and the Android pause/resume/window
+lifecycle — with every entry stamped, levelled (DEBUG/INFO/WARN/ERROR/FATAL), tagged with its
+component and, where one exists, an error code and stack trace. The native engine and the Android
+code write to the same file; nothing is uploaded.
+
+The screen offers **View logs**, **Generate diagnostic report**, **Save report as TXT**, **Share
+report**, **Open last saved report**, **Clear logs** and **View last error**, shows the log size,
+app version, last report time and last error, and has a **detailed logging** switch for
+troubleshooting (off by default, so normal play is not flooded).
+
+The report is a real `VT3_Diagnostic_Report_<date>_<time>.txt` file you pick a folder and name for,
+with sections for application info, the install and its file verification, graphics and frame
+statistics, audio diagnostics, the Android lifecycle, the error history and a summary of detected
+problems. It is saved through the Storage Access Framework, so it needs no storage permission;
+after writing, the app reopens the file and checks it before saying it was saved. Sharing attaches
+that same text file.
+
+Logs are rotated with a size cap (2 MB per file, three older files kept, configurable), written off
+the game and audio threads through a bounded queue, and a crash is preserved for the next launch
+(Java uncaught exceptions, and a native signal line written straight to disk). A native crash that
+kills the process before anything can be written cannot be recorded; the report says so rather than
+pretending otherwise.
+
 ## How it works
 
 1. `tools/recomp/recomp.py` statically translates the x86 code of the v1.0.1 `VT3.exe` into C.

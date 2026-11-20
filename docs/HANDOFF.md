@@ -638,3 +638,91 @@ so is the Android 11-16 range the requirement asks for: only the API-35 `android
 NDK target were available here. Until those run on hardware, treat the storage work as compiled and
 packaged, not as working. A large folder copy also has no resume: an interrupted copy is redone from
 the start on the next attempt.
+
+## Diagnostics: one log and a TXT report (2026-11-20)
+
+A support problem used to leave nothing behind on the device: native logs went to logcat, which the
+average player never sees, and nothing survived a restart. The app now owns a single diagnostic log,
+a native metrics snapshot and a report the player can save or share.
+
+### How it is built
+
+- **One async logger on each side.** `runtime/src/core/log.c` is a 512-slot ring (bounded, drop-and-
+  count) drained by one writer thread. Producers only format and copy; no frame or AAudio callback
+  ever touches storage. `DiagCore` is the Java side of the same contract: a 1024-entry queue, one
+  writer thread, rotating files. Neither side blocks on I/O.
+- **The two logs are one file.** `JNI_OnLoad` in `runtime/src/platform/android_jni.c` caches the
+  `DiagLog` class and its static `nativeWrite` while the library is loaded (the only moment
+  `FindClass` sees app classes). The native writer thread attaches once and calls it, so native and
+  Android entries land in the same rotating file with the same timestamp and severity. If the class
+  is unreachable the logger keeps logcat.
+- **Entry shape:** timestamp, severity (`DEBUG`/`INFO`/`WARN`/`ERROR`/`FATAL`), component, optional
+  numeric error code, message, optional stack trace. `VT3_CERROR("vulkan", result, ...)` and the
+  other component macros are used in the renderer, AAudio, lifecycle, installer and settings code;
+  older untagged calls still work as component `runtime`.
+- **Metrics without file work on the game thread.** `runtime/src/core/diag.c` keeps a per-frame
+  millisecond histogram (atomically, one increment per presented frame), lifecycle counters, GPU
+  identity and API, instance extensions, Vulkan error count and an audio sample, and writes
+  `diag_metrics.txt` (write + rename) at most once a second from the platform pump. The report reads
+  that file. p50/p95/max come from the histogram, so they are real measurements, not estimates.
+- **Detailed mode** is one marker (`diag_detail`, or `VT3_LOG_DETAIL`): DEBUG entries are dropped
+  before they reach the ring otherwise, so normal play does not log per-frame noise.
+- **Survives a restart:** `last_error.txt` keeps the newest warning/error; a `session.txt` marker
+  detects an unclean previous session; `crash.txt` is written by the Java uncaught-exception handler
+  before it delegates; a native signal handler writes one `FATAL native crash: SIG…` line with
+  `write(2)` to `native_crash.txt`, because the async logger cannot be trusted once the process is
+  going away. This is the honest limit: a kill (or a crash before the handler is installed) leaves
+  only what was already flushed.
+- **Rotation and bounds:** 2 MB per file, three older files kept, configurable on the Java side;
+  `Clear logs` deletes only log files, the last-error record and crash records. The game data is
+  never touched, and logging works with no permission at all because the files are in the app's own
+  external files directory.
+
+### The screen
+
+`Settings -> Diagnostics` (`Diagnostics.java`, also a button on the setup screen, where a failed
+install is the interesting case): state block (version, log size, entries accepted/dropped, last
+report time, last error), the detailed-logging switch, then **View logs**, **Generate diagnostic
+report** (live preview, then Save), **Save report as TXT** (SAF create-document, then the file is
+reopened and checked for size and the report header before success is claimed), **Share report** (a
+cache copy served by `DiagFileProvider` through the share sheet), **Open last saved report**,
+**Clear logs** (confirmation dialog) and **View last error**. Every one of them performs its action;
+no placeholder buttons.
+
+`DiagReport` builds sections A-G: application information, install and file verification, graphics
+and frame statistics, audio diagnostics, lifecycle, error history (warnings and errors separated
+from information) and a summary of detected problems plus the last known state. Values that were not
+measured say `unavailable` rather than being guessed.
+
+### Verification actually run
+
+- `javac --release 11 -Xlint:all` over every class with the generated `R`: clean, apart from the
+  four pre-existing deprecation warnings.
+- `android/build_apk.py` end to end with a placeholder `.so`: `aapt2` resolves the new strings and
+  manifest entries, `d8` dexes all the diagnostics classes, `apksigner verify` accepts the APK, and
+  `aapt2 dump xmltree` shows `Vt3App`, `Diagnostics`, `DiagFileProvider`
+  (`net.vt3port.game.diagfiles`) and the unchanged single permission. The shell APK and key were
+  deleted afterwards.
+- NDK clang arm64-v8a compile of every changed native file: clean with `-Wall -Wextra`.
+- `JNI_OnLoad`, `vt3_diag_jni_write` and `vt3_logc` are exported (`llvm-nm -D`) from a shared
+  library built from the three new/changed TUs.
+- **Host test, native** (`runtime/tests/diag_log_test.c`, gcc): 20,000 entries through the ring with
+  every one delivered or counted as dropped, DEBUG gating, FATAL delivered under pressure, flush
+  semantics, the metrics snapshot (frames, p50, max, GPU, counters) and the crash file's session
+  markers. Passes.
+- **Host test, Java** (`tools/diagtest/DiagHostTest.java`, plain `javac`/`java`, no Android): 31
+  checks over rotation bounds, the tail and error readers, last-error persistence, unclean-session
+  detection, every report section, no `null` leakage, and a report written to disk and reopened
+  byte-identical. Passes.
+- **Existing host regression** (`tests/selftest.c` over the shim, core and a stub audio backend):
+  all groups pass, `PASS dsound mixer` included, exit 77 (unit checks passed, ADX skipped).
+
+### Not verified, and it matters
+
+No device or emulator ran any of this. Still owed on hardware: that the JNI hand-off actually
+reaches `DiagLog` under NativeActivity, that the log survives a real kill and the next launch shows
+the preserved last error, that the SAF save/open/share flow behaves with real document providers,
+that a 2 MB rotation happens at the configured rate, that the metrics file is current while the game
+runs, and that none of it disturbs audio or frame pacing. The report's sections are only as good as
+the data the device gives them, and a section that reads `unavailable` before the renderer has ever
+run is expected, not a bug.

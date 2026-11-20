@@ -42,6 +42,20 @@ void     vt3_audio_set_playing(vt3_audio *a, int playing);
  * playback was on, which is what a writer that fell behind or a gated stretch sounds like. */
 uint32_t vt3_audio_underruns(const vt3_audio *a);
 uint32_t vt3_audio_starved(const vt3_audio *a);
+
+/* One snapshot of the output, for the diagnostics report. Returns 0 when there is no output
+ * (the pointer is NULL, or the backend does not track stream state). */
+typedef struct vt3_audio_info {
+    int open;                    /* an output object exists */
+    int streaming;               /* a device stream is open and running */
+    int paused;                  /* the platform asked for silence */
+    int channels;
+    uint32_t sample_rate;
+    uint32_t underruns;
+    uint32_t starved;
+    uint32_t reopen_failures;     /* consecutive failed reopen attempts */
+} vt3_audio_info;
+int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out);
 /* 1 while a device stream is open and running. With none (a failed open, or a disconnect being
  * recovered) the DirectSound mixer keeps its timeline on the wall clock and drops the audio. */
 int      vt3_audio_streaming(const vt3_audio *a);

@@ -13,7 +13,10 @@
          Play, so a store build drops it and keeps the SAF path (see docs/HANDOFF.md). -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
-    <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:hasCode="true"
+    <!-- Vt3App starts the diagnostic log for every process launch, including a NativeActivity the
+         system relaunches on its own after a process death. -->
+    <application android:name="net.vt3port.game.Vt3App"
+        android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:hasCode="true"
         android:debuggable="true" android:theme="@style/Theme.VT3">
         <activity android:name="net.vt3port.game.Installer"
             android:exported="true"
@@ -27,6 +30,15 @@
         <!-- Its own task, so opening it while the game runs never stacks a second game on top. -->
         <activity android:name="net.vt3port.game.Settings" android:exported="true"
             android:taskAffinity="" android:excludeFromRecents="true" />
+        <!-- Settings -> Diagnostics: logs, the TXT report and its save/share actions. Not exported:
+             only this app opens it. -->
+        <activity android:name="net.vt3port.game.Diagnostics" android:exported="false"
+            android:taskAffinity="" android:excludeFromRecents="true" />
+        <!-- Reads back the report copy written to the app's own cache, for the share sheet. -->
+        <provider android:name="net.vt3port.game.DiagFileProvider"
+            android:authorities="net.vt3port.game.diagfiles"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <!-- Writes the thermal status marker while the game runs; the runtime lowers anisotropy as
              the phone heats, and the next launch moves the resolution one rung. -->
         <service android:name="net.vt3port.game.ThermalWatch" android:exported="false" />

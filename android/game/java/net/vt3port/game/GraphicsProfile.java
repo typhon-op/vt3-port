@@ -5,7 +5,6 @@ import android.content.Context;
 import android.os.Build;
 import android.os.PowerManager;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
 
@@ -135,7 +134,7 @@ public final class GraphicsProfile {
         write(root, "render_h", height > 0 ? Integer.toString(height) : null);
         write(root, "aniso", Integer.toString(aniso));
         write(root, "render_scale_pct", Integer.toString(scale));
-        Log.i(TAG, "tier " + TIER_NAME[tier] + " preset " + preset + " thermal " + thermal
+        DiagLog.i(TAG, "tier " + TIER_NAME[tier] + " preset " + preset + " thermal " + thermal
                 + " -> fps " + fps + " height " + (height > 0 ? height : "native")
                 + " aniso " + aniso + " scale " + scale + "%");
     }
@@ -205,7 +204,7 @@ public final class GraphicsProfile {
                 out.write(value.getBytes("UTF-8"));
             }
         } catch (IOException e) {
-            Log.w(TAG, "could not write " + name + ": " + e.getMessage());
+            DiagLog.w(TAG, "could not write " + name + ": " + e.getMessage());
         }
     }
 }
