@@ -519,3 +519,55 @@ Not run, and required before claiming anything about the sound: `python build.py
    lock/unlock screen and sleep/wake (window destroyed and recreated); Bluetooth connect/disconnect
    during a match (reopen, and the retry path when the new route is busy); volume keys; a cold start
    where another app holds the output (should start silent and come in once the pump reopens).
+
+## Build environment and Android verification (2026-11-20)
+
+This section records what a Linux x86-64 cloud VM with no root, no device and no copy of the game
+could and could not establish. It replaces the "stand-in headers" note above with a real NDK build.
+
+### Toolchain restored (user-space, no root)
+
+- CMake 3.31.6 and Ninja 1.12.1 from their release tarballs.
+- Temurin JDK 21.0.13, `ANDROID_HOME` with `cmdline-tools` 13114758, `platform-tools`, `platforms;android-35`
+  and `build-tools;36.1.0`.
+- NDK **30.0.16248370** (clang 21.0.0), the version the port is tested with, `aarch64-linux-android29`.
+- `glslangValidator` 16.4.0, extracted from the Ubuntu `glslang-tools` package with `dpkg -x` (no `apt`
+  without root), plus `pefile` and `capstone` in a local target directory for `recomp.py`.
+- With those on `PATH`/`ANDROID_HOME`/`ANDROID_NDK_HOME`/`JAVA_HOME`, every `need()` preflight check in
+  `build.py android` passes; the build then stops at `translate()`, the first step, for want of `VT3.exe`.
+
+### Compiled for the device (arm64-v8a)
+
+- All 43 translation units of the runtime and shim — `VT3_CORE_COMMON`, the Android platform set
+  (`audio_android.c`, `input_android.c`, `platform_android.c`, `vk.c`), all 27 shim sources, and the
+  generated `vt3_shim_adapters.c` (575 adapters) — compile with NDK clang against real AAudio, Vulkan
+  and `native_app_glue` headers, `-O2 -std=gnu11 -Wall -Wextra -fno-plt -fno-stack-protector`. Result:
+  43 ok, 0 failed, 1 warning, a pre-existing signed/unsigned comparison at `d3d9_draw.c:1062`.
+- `vt3selftest_android` links as an AArch64 PIE (`tests/selftest.c` + `tests/android_selftest_main.c`
+  over the same objects, `-landroid -llog -laaudio -lvulkan -lm`). It was **not run**: no arm64 device,
+  no emulator and no `qemu-user` here. Building it is not the same as it passing.
+- The published link line `cmake --build ... --target vt3android` was not exercised, because `vt3.c`
+  (100 MB of translated game) can only be generated from `VT3.exe`. The `vt3android` link itself is
+  therefore unproven, though every object it consumes compiles.
+
+### Packaging and signing chain verified
+
+`android/build_apk.py` was run end to end with a placeholder `libvt3android.so` (since deleted):
+`aapt2 compile`/`link` over the real `res/` and manifest, `javac --release 11` of `Settings`,
+`GraphicsProfile`, `ThermalWatch`, `Installer` and the generated `R`, `d8 --min-api 29`, the
+`jni/install.c` + vendored unshield library, `zipalign -p 4`, `keytool` for a debug key, and
+`apksigner sign`. `apksigner verify --print-certs` accepts the result; `aapt2 dump badging` reports
+`net.vt3port.game` 0.2.0, minSdk 29, targetSdk 35, label `VT3`, and the 16 KB page-size flag is on
+both libraries. The throwaway key and the shell APK were removed: signing the real APK with a
+fresh key would strand any installed copy (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
+
+### Still blocking the APK and the device tests
+
+1. **No `VT3.exe`.** The repository ships no game code by design; `build.py` hashes the translated
+   image against `52be3cda…` and refuses anything else. A retail executable cannot be fetched here.
+   Supply your own English v1.0.1 `VT3.exe` and rerun `python build.py android --exe VT3.exe`.
+2. **No device and no disc image.** The APK installs without game data and unpacks the disc on first
+   run, so `adb install` plus a phone with the ISO is needed for every item on the checklist above.
+3. **Nothing in this section proves audio.** Compilation, linking and signing say the code builds for
+   ARM64 and packages correctly; they say nothing about whether it sounds right, resumes, or survives
+   a Bluetooth route change. Those are still owed to the device checklist.
