@@ -211,6 +211,10 @@ public class Installer extends Activity {
             }
         } catch (Exception ignored) {
         }
+        /* Resolve the graphics ladder (device tier, preset, per-option overrides, thermal rung)
+         * into the markers the renderer reads, and keep the thermal status current while it runs. */
+        GraphicsProfile.apply(this, root);
+        ThermalWatch.start(this);
         startActivity(new Intent(this, NativeActivity.class));
         finish();
     }

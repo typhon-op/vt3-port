@@ -64,6 +64,49 @@ static void *pgo_dump(void *arg)
 }
 #endif
 
+/* The Settings screen writes effective values as marker files (GraphicsProfile.java resolves the
+ * device tier, the chosen preset, the per-option overrides and the thermal rung into them). Each
+ * marker is the same lever as its VT3_* variable, so a value in vt3.env or the environment wins. */
+static int marker_int(const char *name, int def)
+{
+    char path[256];
+    snprintf(path, sizeof path, "%s/%s", VT3_ANDROID_ROOT, name);
+    FILE *f = fopen(path, "r");
+    if (!f) return def;
+    int v = def;
+    if (fscanf(f, "%d", &v) != 1) v = def;
+    fclose(f);
+    return v;
+}
+
+static void set_int_env(const char *name, int v)
+{
+    char val[16];
+    snprintf(val, sizeof val, "%d", v);
+    if (getenv(name) == NULL) setenv(name, val, 0);
+    VT3_INFO("android: %s=%s", name, val);
+}
+
+static void apply_settings(void)
+{
+    /* The render thread polls this directory for the thermal status and the anisotropy cap. */
+    setenv("VT3_SETTINGS_DIR", VT3_ANDROID_ROOT, 1);
+    int fps = marker_int("fps_cap", -1);
+    if (fps < 0 && access(VT3_ANDROID_ROOT "/fps60", F_OK) == 0) fps = 60;  /* older shortcut */
+    if (fps >= 0) set_int_env("VT3_FPS_CAP", fps);
+    int h = marker_int("render_h", 0);
+    if (h >= 240) set_int_env("VT3_RENDER_HEIGHT", h);
+    int aniso = marker_int("aniso", 0);
+    if (aniso > 0) set_int_env("VT3_ANISO", aniso);
+    int pct = marker_int("render_scale_pct", 0);
+    if (pct >= 40 && pct <= 100) {
+        char val[16];
+        snprintf(val, sizeof val, "%.2f", pct / 100.0);
+        if (getenv("VT3_RENDER_SCALE") == NULL) setenv("VT3_RENDER_SCALE", val, 0);
+        VT3_INFO("android: VT3_RENDER_SCALE=%s", val);
+    }
+}
+
 void android_main(struct android_app *app)
 {
 #ifdef VT3_PGO_GEN
@@ -72,8 +115,7 @@ void android_main(struct android_app *app)
 #endif
     vt3_platform_android_attach(app);
     apply_env_file(VT3_ANDROID_ROOT "/vt3.env");
-    /* The Settings screen's "60 Hz battery saver" (a marker file); a VT3_FPS_CAP in vt3.env wins. */
-    if (access(VT3_ANDROID_ROOT "/fps60", F_OK) == 0) setenv("VT3_FPS_CAP", "60", 0);
+    apply_settings();
     /* Full screen: the game draws over the whole panel, with no status bar (the activity has no Java). */
     ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_FULLSCREEN, 0);
     /* Game data: <root>/data2 is the extracted English archive set; <root>/image.bin is the image. */

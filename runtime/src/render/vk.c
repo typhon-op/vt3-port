@@ -211,7 +211,9 @@ static struct {
     vk_sampler_entry samplers[SAMPLER_CACHE];
     uint32_t nsamplers;
     float max_aniso;
+    float aniso_hw;          /* the device maximum, so a thermal step can only lower */
     int aniso_enabled;
+    int aniso_target;        /* the cap the settings/thermal poll last asked for, -1 unset */
     VkBuffer ubo, vb, ib;
     VkDeviceMemory ubo_mem, vb_mem, ib_mem;
     uint8_t *ubo_ptr, *vb_ptr, *ib_ptr;
@@ -1537,9 +1539,13 @@ static VkSamplerAddressMode sampler_address(uint8_t mode)
     }
 }
 
+/* Most recent sampler hit: a scene reuses one sampler for most draws. File scope so a policy change
+ * can drop the cache after lowering the anisotropy level. */
+static int g_sampler_last = -1;
+
 static VkSampler sampler_for(uint8_t minf, uint8_t magf, uint8_t u, uint8_t v, uint8_t w)
 {
-    static int last = -1;   /* most recent hit: a scene reuses one sampler for most draws */
+    int last = g_sampler_last;
     /* The non-programmable TL path passes NULL state and keeps its historical clamp/linear sampler. */
     if (minf == 0 && magf == 0 && u == 0 && v == 0 && w == 0) return g.samp;
     if (last >= 0 && (uint32_t)last < g.nsamplers) {
@@ -1550,7 +1556,7 @@ static VkSampler sampler_for(uint8_t minf, uint8_t magf, uint8_t u, uint8_t v, u
     for (uint32_t i = 0; i < g.nsamplers; i++) {
         vk_sampler_entry *e = &g.samplers[i];
         if (e->minf == minf && e->magf == magf && e->u == u && e->v == v && e->w == w) {
-            last = (int)i;
+            g_sampler_last = (int)i;
             return e->sampler;
         }
     }
@@ -1581,7 +1587,7 @@ static VkSampler sampler_for(uint8_t minf, uint8_t magf, uint8_t u, uint8_t v, u
     }
     vk_sampler_entry *e = &g.samplers[g.nsamplers++];
     e->minf = minf; e->magf = magf; e->u = u; e->v = v; e->w = w; e->sampler = sampler;
-    last = (int)g.nsamplers - 1;
+    g_sampler_last = (int)g.nsamplers - 1;
     return sampler;
 }
 
@@ -2018,6 +2024,48 @@ static void vk_draw_program_impl(const vt3_draw *d)
 /* The game advances once per presented frame and was built for 60 of them a second, as on the desktop
  * where SDL's swap interval paces it. FIFO follows the panel, which may run at 120 Hz, so the present
  * path waits out the rest of each 1/60 s. VT3_FPS_CAP sets the rate; 0 turns the limit off. */
+/* Settings and thermal status, as marker files in the app's files dir (VT3_SETTINGS_DIR, set by
+ * android_entry.c). Polling once a second lets the thermal service lower anisotropic filtering while
+ * a match runs without touching anything that needs the renderer rebuilt: resolution and the frame
+ * cap are fixed at start-up, and the next launch moves those. */
+static int settings_int(const char *name, int def)
+{
+    const char *dir = getenv("VT3_SETTINGS_DIR");
+    if (!dir || !*dir) return def;
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    FILE *f = fopen(path, "r");
+    if (!f) return def;
+    int v = def;
+    if (fscanf(f, "%d", &v) != 1) v = def;
+    fclose(f);
+    return v;
+}
+
+static void policy_poll(void)
+{
+    static uint64_t last;
+    uint64_t now = now_ns();
+    if (last && now - last < 1000000000ull) return;
+    last = now;
+    if (!g.aniso_enabled) return;
+    int thermal = settings_int("thermal", 0);
+    int cap = settings_int("aniso", 0);
+    /* Heat steps the cap down one level at a time (16 -> 8 -> 4 -> 2); nothing raises it while the
+     * status is high, and the device maximum is the ceiling in every case. */
+    if (thermal >= 2) { int t = thermal >= 4 ? 2 : thermal >= 3 ? 4 : 8; if (!cap || t < cap) cap = t; }
+    if (cap >= 1 && cap <= 16) {
+        float want = (float)cap;
+        if (want > g.aniso_hw) want = g.aniso_hw;
+        if (want < g.max_aniso) {
+            g.max_aniso = want;
+            g.nsamplers = 0;      /* rebuilt at the new level; the old samplers stay valid */
+            g_sampler_last = -1;
+            VT3_INFO("vulkan: anisotropy now %.0fx (thermal status %d)", g.max_aniso, thermal);
+        }
+    }
+}
+
 static void frame_limit(void)
 {
     static long long period_ns = -1;
@@ -2219,6 +2267,7 @@ static void vk_present(const vt3_rect *dst, int nearest, int drawable_w, int dra
 #endif
     }
     uint64_t lt0 = stats_enabled() ? now_ns() : 0;
+    policy_poll();
     frame_limit();
     if (stats_enabled()) g_stats.limit_ns += now_ns() - lt0;
     stats_log();
@@ -2442,9 +2491,26 @@ static int vk_init(int logical_w, int logical_h)
     vkGetPhysicalDeviceProperties(g.phys, &props);
     VkPhysicalDeviceLimits lim = props.limits;
     g.max_aniso = g.aniso_enabled && lim.maxSamplerAnisotropy > 0.0f ? lim.maxSamplerAnisotropy : 1.0f;
+    g.aniso_hw = g.max_aniso;
     const char *an = getenv("VT3_ANISO");   /* cap the anisotropy of the game's anisotropic samplers */
     if (an && *an && atof(an) >= 1.0 && atof(an) < g.max_aniso) g.max_aniso = (float)atof(an);
     VT3_INFO("vulkan: anisotropy up to %.0fx", g.max_aniso);
+    /* A frame larger than the device can allocate would fail deep in target creation with no clue
+     * which setting caused it; clamp to the device's own limits and say so. This is the guard for
+     * a 4K tablet panel or a stale settings file, not a substitute for testing on the device. */
+    uint32_t dim_max = lim.maxImageDimension2D < lim.maxFramebufferWidth ? lim.maxImageDimension2D
+                                                                       : lim.maxFramebufferWidth;
+    if (lim.maxFramebufferHeight < dim_max) dim_max = lim.maxFramebufferHeight;
+    if (dim_max && ((uint32_t)g.logical_w > dim_max || (uint32_t)g.logical_h > dim_max)) {
+        int w = g.logical_w, h = g.logical_h;
+        double k = (double)dim_max / (double)(w > h ? w : h);
+        g.logical_w = ((int)(w * k)) & ~1;
+        g.logical_h = ((int)(h * k)) & ~1;
+        if (g.logical_w < 2) g.logical_w = 2;
+        if (g.logical_h < 2) g.logical_h = 2;
+        VT3_WARN("vulkan: %dx%d is over the device limit %u; rendering at %dx%d", w, h, dim_max,
+                 g.logical_w, g.logical_h);
+    }
     if (lim.minUniformBufferOffsetAlignment > 256) {
         VT3_ERROR("vulkan: uniform buffer alignment %llu is larger than the 256 bytes assumed",
                   (unsigned long long)lim.minUniformBufferOffsetAlignment);

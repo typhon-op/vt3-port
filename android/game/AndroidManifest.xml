@@ -20,6 +20,9 @@
         <!-- Its own task, so opening it while the game runs never stacks a second game on top. -->
         <activity android:name="net.vt3port.game.Settings" android:exported="true"
             android:taskAffinity="" android:excludeFromRecents="true" />
+        <!-- Writes the thermal status marker while the game runs; the runtime lowers anisotropy as
+             the phone heats, and the next launch moves the resolution one rung. -->
+        <service android:name="net.vt3port.game.ThermalWatch" android:exported="false" />
         <!-- keyboard|navigation: connecting a pad or keyboard must not recreate the activity, which
              ends the game (APP_CMD_DESTROY) mid-match; the game takes the change as a resize. -->
         <activity android:name="android.app.NativeActivity"
