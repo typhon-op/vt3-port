@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The strip along the foot that setup's progress and messages sit in, as the old
+     scoreboard strip: deep navy with a red rule on top. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/vt3_page_deep" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item android:gravity="top" android:height="2dp" android:left="1dp" android:right="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/vt3_red" />
+        </shape>
+    </item>
+</layer-list>

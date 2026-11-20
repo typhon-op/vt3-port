@@ -1,4 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">VT3</string>
+    <string name="wordmark">VT3</string>
+    <string name="title">VIRTUA TENNIS 3</string>
+    <string name="subtitle">PC static recompilation &#183; Android port</string>
+
+    <string name="step1_label">PC disc image</string>
+    <string name="step1_hint">The European PC DVD, as an .iso. It is unpacked on this device; nothing is uploaded.</string>
+    <string name="step1_button">Select disc image</string>
+    <string name="step1_done">Disc image selected</string>
+
+    <string name="step2_label">VT3.exe</string>
+    <string name="step2_hint">The English v1.0.1 executable, bare or in a .zip. It is checked against the build this port was made from.</string>
+    <string name="step2_button">Select VT3.exe</string>
+    <string name="step2_done">VT3.exe selected</string>
+
+    <string name="step_waiting">Not selected</string>
+    <string name="install">Install</string>
+    <string name="install_note">Needs about 4.5 GB free. Keep the app open while it unpacks.</string>
+    <string name="legal">Requires your own copy of Virtua Tennis 3. Unofficial fan port, not affiliated with SEGA.</string>
+
+    <string name="setup_running">Setup is running&#8230;</string>
+    <string name="checking_exe">Checking VT3.exe&#8230;</string>
+    <string name="unpacking">Unpacking the disc&#8230; </string>
+
     <string name="settings">Settings</string>
+    <string name="settings_title">Virtua Tennis 3 settings</string>
+    <string name="settings_saver">60 Hz battery saver (less heat and power; the game is smoothest at 120 Hz)</string>
+    <string name="settings_note">Applies the next time the game starts. Press Back to close.</string>
 </resources>

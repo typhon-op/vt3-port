@@ -8,10 +8,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
-import android.view.Gravity;
+import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
-import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
@@ -28,6 +28,9 @@ import java.util.zip.ZipInputStream;
  * Launcher. On first run the player picks their PC disc image and the v1.0.1 VT3.exe; this unpacks
  * the game data and builds image.bin in the app's files dir (the VT3_ANDROID_ROOT the game reads),
  * then writes install.ok. Every later launch goes straight to the game.
+ *
+ * The screen is res/layout/activity_installer.xml: a court banner with the VT3 wordmark, one card
+ * per file the player supplies, the install button, and a foot strip for progress and messages.
  */
 public class Installer extends Activity {
     static { System.loadLibrary("vt3install"); }
@@ -43,7 +46,8 @@ public class Installer extends Activity {
     File root;
     Uri iso, zip;
     Button isoButton, zipButton, installButton;
-    TextView status;
+    TextView isoState, exeState, status;
+    ProgressBar bar;
     static final Handler ui = new Handler(Looper.getMainLooper());
     /* The install thread outlives the activity (a recreate, or a relaunch from the icon), so it
      * reports to whichever instance is on screen, and a second install never runs over the first. */
@@ -58,30 +62,22 @@ public class Installer extends Activity {
             launch();
             return;
         }
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER);
-        box.setPadding(48, 48, 48, 48);
-        TextView title = new TextView(this);
-        title.setText("Virtua Tennis 3 setup");
-        title.setTextSize(24);
-        box.addView(title);
-        isoButton = button(box, "1. Select PC disc image (.iso)", PICK_ISO);
-        zipButton = button(box, "2. Select v1.0.1 VT3.exe (or a .zip holding it)", PICK_ZIP);
-        installButton = new Button(this);
-        installButton.setText("Install");
-        installButton.setEnabled(false);
+        setContentView(R.layout.activity_installer);
+        isoButton = findViewById(R.id.iso_button);
+        zipButton = findViewById(R.id.exe_button);
+        installButton = findViewById(R.id.install_button);
+        isoState = findViewById(R.id.iso_state);
+        exeState = findViewById(R.id.exe_state);
+        status = findViewById(R.id.status);
+        bar = findViewById(R.id.progress);
+        isoButton.setOnClickListener(v -> pick(PICK_ISO));
+        zipButton.setOnClickListener(v -> pick(PICK_ZIP));
         installButton.setOnClickListener(v -> install());
-        box.addView(installButton);
-        status = new TextView(this);
-        status.setText("Needs about 4.5 GB free. The files stay on this device; uninstalling removes them.");
-        box.addView(status);
-        setContentView(box);
         live = this;
         if (busy) {
             isoButton.setEnabled(false);
             zipButton.setEnabled(false);
-            status.setText("Setup is running...");
+            status.setText(R.string.setup_running);
         }
     }
 
@@ -96,20 +92,26 @@ public class Installer extends Activity {
         if (!busy) super.onBackPressed(); /* leaving mid-install lets the system kill the unpacking */
     }
 
-    Button button(LinearLayout box, String label, int code) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setOnClickListener(v -> startActivityForResult(
-                new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), code));
-        box.addView(b);
-        return b;
+    void pick(int code) {
+        startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), code);
     }
 
     @Override
     protected void onActivityResult(int code, int result, Intent data) {
         if (result != RESULT_OK || data == null) return;
-        if (code == PICK_ISO) { iso = data.getData(); isoButton.setText("1. Disc image selected"); }
-        if (code == PICK_ZIP) { zip = data.getData(); zipButton.setText("2. VT3.exe selected"); }
+        if (code == PICK_ISO) {
+            iso = data.getData();
+            isoButton.setText(R.string.step1_done);
+            isoState.setText(R.string.step1_done);
+            isoState.setTextColor(getColor(R.color.vt3_ball));
+        }
+        if (code == PICK_ZIP) {
+            zip = data.getData();
+            zipButton.setText(R.string.step2_done);
+            exeState.setText(R.string.step2_done);
+            exeState.setTextColor(getColor(R.color.vt3_ball));
+        }
         installButton.setEnabled(iso != null && zip != null);
     }
 
@@ -119,13 +121,19 @@ public class Installer extends Activity {
         isoButton.setEnabled(false);
         zipButton.setEnabled(false);
         installButton.setEnabled(false);
+        bar.setVisibility(View.VISIBLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         new Thread(() -> {
             try {
-                say("Checking VT3.exe...");
+                say(getString(R.string.checking_exe));
                 buildImage();
                 Runnable[] tick = new Runnable[1];
-                tick[0] = () -> { say("Unpacking the disc... " + progress() / 10 + "%"); ui.postDelayed(tick[0], 500); };
+                tick[0] = () -> {
+                    int permille = progress();
+                    bar.setProgress(permille);
+                    status.setText(getString(R.string.unpacking) + permille / 10 + "%");
+                    ui.postDelayed(tick[0], 500);
+                };
                 ui.post(tick[0]);
                 int rc;
                 try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(iso, "r")) {
@@ -146,6 +154,7 @@ public class Installer extends Activity {
                     busy = false;
                     Installer a = live;
                     if (a == null) return;
+                    a.bar.setVisibility(View.GONE);
                     a.status.setText("Setup failed: " + e.getMessage());
                     a.isoButton.setEnabled(true);
                     a.zipButton.setEnabled(true);

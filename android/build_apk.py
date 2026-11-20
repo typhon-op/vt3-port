@@ -101,10 +101,25 @@ def main(argv):
              "-Wl,-z,max-page-size=16384", "-o", os.path.join(stage, "lib", "arm64-v8a", "libvt3install.so")]
             + [os.path.join(jni_dir, f) for f in sorted(os.listdir(jni_dir)) if f.endswith(".c")]
             + us_src + [os.path.join(us, "lib", "md5", "md5c.c"), "-lz"])
+    # Resources are linked before the Java: aapt2 --java writes R.java, and the app's screens name
+    # their layout, ids, colours and strings through it.
+    base = os.path.join(build, "base.apk")
+    res_dir = os.path.join(app_dir, "res")
+    gen = os.path.join(build, "gen")
+    os.makedirs(gen, exist_ok=True)
+    link_inputs = []
+    if os.path.isdir(res_dir):
+        compiled = os.path.join(build, "compiled_res.zip")
+        run([tool(bt, "aapt2"), "compile", "--dir", res_dir, "-o", compiled])
+        link_inputs = [compiled]
+    run([tool(bt, "aapt2"), "link", "-o", base, "-I", jar] + link_inputs +
+        ["--manifest", manifest, "--java", gen,
+         "--min-sdk-version", str(API), "--target-sdk-version", str(TARGET_API)])
     java_dir = os.path.join(app_dir, "java")
     if os.path.isdir(java_dir):
         classes = os.path.join(build, "classes")
         javas = [os.path.join(d, f) for d, _, fs in os.walk(java_dir) for f in fs if f.endswith(".java")]
+        javas += [os.path.join(d, f) for d, _, fs in os.walk(gen) for f in fs if f.endswith(".java")]
         run([tool(JAVA_HOME, "bin", "javac"), "--release", "11", "-classpath", jar, "-d", classes] + javas)
         class_files = [os.path.join(d, f) for d, _, fs in os.walk(classes) for f in fs if f.endswith(".class")]
         run([tool(bt, "d8"), "--min-api", str(API), "--lib", jar, "--output", stage] + class_files)
@@ -112,16 +127,6 @@ def main(argv):
     for a in assets:
         os.makedirs(os.path.join(stage, "assets"), exist_ok=True)
         shutil.copy(a, os.path.join(stage, "assets", os.path.basename(a)))
-    base = os.path.join(build, "base.apk")
-    res_dir = os.path.join(os.path.dirname(manifest), "res")
-    link_inputs = []
-    if os.path.isdir(res_dir):
-        compiled = os.path.join(build, "compiled_res.zip")
-        run([tool(bt, "aapt2"), "compile", "--dir", res_dir, "-o", compiled])
-        link_inputs = [compiled]
-    run([tool(bt, "aapt2"), "link", "-o", base, "-I", jar] + link_inputs +
-        ["--manifest", manifest,
-         "--min-sdk-version", str(API), "--target-sdk-version", str(TARGET_API)])
     with zipfile.ZipFile(base, "a", zipfile.ZIP_DEFLATED) as z:
         for d, _, fs in os.walk(stage):
             for f in fs:

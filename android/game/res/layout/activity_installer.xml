@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The setup screen: a court banner with the VT3 wordmark over it, the two files the player has
+     to supply as numbered steps, the one box that starts the install, and the strip along the foot
+     that progress and messages run in. Scrolling, so it fits a phone held either way. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/vt3_page"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="20dp">
+
+        <!-- The court, with the wordmark and the title sitting on its darkened foot. -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="210dp">
+
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/vt3_banner"
+                android:importantForAccessibility="no" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_scrim_bottom" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_wordmark"
+                        android:paddingStart="9dp"
+                        android:paddingEnd="9dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp"
+                        android:text="@string/wordmark"
+                        android:textColor="@color/vt3_text"
+                        android:textSize="18sp"
+                        android:textStyle="bold|italic"
+                        android:letterSpacing="0.04"
+                        android:fontFamily="sans-serif-condensed" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="@string/title"
+                        android:textColor="@color/vt3_text"
+                        android:textSize="22sp"
+                        android:textStyle="bold|italic"
+                        android:textAllCaps="true"
+                        android:letterSpacing="0.06"
+                        android:fontFamily="sans-serif-condensed" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/subtitle"
+                    android:textColor="@color/vt3_blue_light"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.08"
+                    android:fontFamily="sans-serif-condensed" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Step 1: the disc image. -->
+        <LinearLayout style="@style/Vt3Card">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/Vt3StepNumber" android:text="1" />
+
+                <TextView style="@style/Vt3StepLabel" android:text="@string/step1_label" />
+            </LinearLayout>
+
+            <TextView style="@style/Vt3StepHint" android:text="@string/step1_hint" />
+
+            <Button
+                android:id="@+id/iso_button"
+                style="@style/Vt3Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/step1_button" />
+
+            <TextView
+                android:id="@+id/iso_state"
+                style="@style/Vt3State"
+                android:text="@string/step_waiting" />
+        </LinearLayout>
+
+        <!-- Step 2: the executable the port is built from. -->
+        <LinearLayout style="@style/Vt3Card">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/Vt3StepNumber" android:text="2" />
+
+                <TextView style="@style/Vt3StepLabel" android:text="@string/step2_label" />
+            </LinearLayout>
+
+            <TextView style="@style/Vt3StepHint" android:text="@string/step2_hint" />
+
+            <Button
+                android:id="@+id/exe_button"
+                style="@style/Vt3Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/step2_button" />
+
+            <TextView
+                android:id="@+id/exe_state"
+                style="@style/Vt3State"
+                android:text="@string/step_waiting" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/install_button"
+            style="@style/Vt3Button.Install"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:enabled="false"
+            android:text="@string/install" />
+
+        <!-- Progress and messages, on the foot strip. -->
+        <LinearLayout style="@style/Vt3Ticker">
+
+            <ProgressBar
+                android:id="@+id/progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="6dp"
+                android:max="1000"
+                android:progress="0"
+                android:progressTint="@color/vt3_ball"
+                android:progressBackgroundTint="@color/vt3_line"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/status"
+                style="@style/Vt3Status"
+                android:layout_marginTop="6dp"
+                android:text="@string/install_note" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/legal"
+            android:textColor="@color/vt3_muted"
+            android:textSize="10sp"
+            android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+</ScrollView>

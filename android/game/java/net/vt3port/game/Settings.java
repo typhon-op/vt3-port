@@ -20,13 +20,17 @@ public class Settings extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
+        box.setBackgroundColor(getColor(R.color.vt3_page));
         box.setPadding(48, 48, 48, 48);
         TextView title = new TextView(this);
-        title.setText("Virtua Tennis 3 settings");
+        title.setText(R.string.settings_title);
         title.setTextSize(24);
+        title.setTextColor(getColor(R.color.vt3_text));
+        title.setTextAlignment(TextView.TEXT_ALIGNMENT_CENTER);
         box.addView(title);
         Switch saver = new Switch(this);
-        saver.setText("60 Hz battery saver (less heat and power; the game is smoothest at 120 Hz)");
+        saver.setText(R.string.settings_saver);
+        saver.setTextColor(getColor(R.color.vt3_text));
         saver.setChecked(fps60.exists());
         saver.setOnCheckedChangeListener((v, on) -> {
             try {
@@ -37,7 +41,8 @@ public class Settings extends Activity {
         });
         box.addView(saver);
         TextView note = new TextView(this);
-        note.setText("Applies the next time the game starts. Press Back to close.");
+        note.setText(R.string.settings_note);
+        note.setTextColor(getColor(R.color.vt3_muted));
         box.addView(note);
         setContentView(box);
         saver.requestFocus();

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher's palette, taken from the port's own VT3 icon (assets/icon/vt3_logo_icon_1024.png):
+     the red of the icon's tile, the two blues of the "3", the navy of its outlines, and the
+     yellow-green of a tennis ball for the one action that moves the setup forward. -->
+<resources>
+    <color name="vt3_page">#0B1730</color>
+    <color name="vt3_page_deep">#060E1F</color>
+    <color name="vt3_red">#D8402B</color>
+    <color name="vt3_red_dark">#A62A19</color>
+    <color name="vt3_blue">#1F5FC4</color>
+    <color name="vt3_blue_light">#6FA8DC</color>
+    <color name="vt3_ball">#D8E64A</color>
+    <color name="vt3_ball_dark">#C2D42C</color>
+    <color name="vt3_navy">#16254C</color>
+    <color name="vt3_card">#13254A</color>
+    <color name="vt3_line">#2B4577</color>
+    <color name="vt3_text">#FFFFFF</color>
+    <color name="vt3_muted">#9DB0D0</color>
+    <color name="vt3_disabled">#3A4A6B</color>
+</resources>
