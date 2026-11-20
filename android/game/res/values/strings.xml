@@ -16,6 +16,40 @@
     <string name="step2_done">VT3.exe selected</string>
 
     <string name="step_waiting">Not selected</string>
+
+    <!-- Storage access. The picker alone is enough; All Files Access only adds the two shortcuts. -->
+    <string name="storage_title">Files on this device</string>
+    <string name="storage_hint">The game is read from plain files, so everything it needs must end up in real storage. The picker above already does that without any permission. Allowing all files access only adds two shortcuts: using an unpacked game folder where it lies, and installing to a folder of your choice. It grants access to the whole shared storage, so it is optional.</string>
+    <string name="storage_allow">Allow all files access</string>
+    <string name="storage_check">Recheck access</string>
+    <string name="storage_granted">All files access granted.</string>
+    <string name="storage_denied">All files access not granted. Optional: the picker works without it.</string>
+    <string name="storage_denied_asked">All files access not granted. Tap to review the setting.</string>
+    <string name="storage_howto">In the system screen, allow this app to manage all files, then come back. This screen checks again when you return.</string>
+    <string name="storage_no_settings">This device has no All Files Access screen. Use the picker instead.</string>
+    <string name="storage_old">All files access needs Android 11 or newer. Use the picker instead.</string>
+    <string name="storage_no_picker">This device has no folder picker. Use the disc image instead.</string>
+
+    <string name="source_button">Use an unpacked game folder</string>
+    <string name="source_disc">Disc image (step 1)</string>
+    <string name="source_tree">Folder chosen with the picker</string>
+    <string name="source_not_install">%1$s does not look like an unpacked Virtua Tennis 3 folder: it has no Resource folder.</string>
+    <string name="source_using">Reading the game from %1$s.</string>
+    <string name="source_tree_ready">Folder chosen. It is copied into app storage while installing.</string>
+    <string name="source_tree_failed">That folder could not be opened. Its permission may have been revoked: pick it again.</string>
+    <string name="source_tree_lost">The folder chosen earlier is no longer accessible. Pick it again, or use the disc image.</string>
+    <string name="source_empty">There are no files in that folder.</string>
+
+    <string name="dest_button">Install folder</string>
+    <string name="dest_default">App storage (no permission needed)</string>
+    <string name="dest_needs_access">Choosing another install folder needs all files access. Grant it above, or keep app storage.</string>
+    <string name="dest_unwritable">Cannot write to %1$s.</string>
+    <string name="dest_no_space">Not enough free space there: the install needs about 4.5 GB.</string>
+    <string name="browse_here">Use this folder</string>
+    <string name="browse_up">..</string>
+    <string name="copying">Copying game files&#8230; </string>
+    <string name="verifying">Checking the installed files&#8230;</string>
+    <string name="install_bad">Nothing was installed. The game data is incomplete.</string>
     <string name="install">Install</string>
     <string name="install_note">Needs about 4.5 GB free. Keep the app open while it unpacks.</string>
     <string name="legal">Requires your own copy of Virtua Tennis 3. Unofficial fan port, not affiliated with SEGA.</string>

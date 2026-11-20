@@ -103,6 +103,32 @@ The Linux and Windows steps have not been tested yet. Please report what breaks.
 Requirements: Android 10 or newer, ARM64, Vulkan, and about 4.5 GB free. Controllers work, and
 on-screen touch controls appear on phones. Uninstalling the app removes the unpacked game.
 
+### Game files and storage access
+
+The picker is all that is needed: whatever you choose is read through the system's document API and
+copied into the app's own storage, which is the only place the game reads from. Nothing asks for a
+broad storage permission to install.
+
+The setup screen also offers two optional shortcuts, both behind Android's **All files access**
+(`MANAGE_EXTERNAL_STORAGE`), which you grant yourself on a system settings screen the app opens for
+you, and which the app re-checks every time you come back to it:
+
+- **Use an unpacked game folder** — if you already have the PC install unpacked on the phone, the
+game reads it where it lies instead of unpacking a 4.5 GB image.
+- **Install folder** — puts `data2` on a folder of your choice instead of app storage. The path is
+  recorded for the runtime, which still only ever opens plain paths.
+
+Nothing breaks without that permission: the screen says it is optional, the picker path always
+works, and a folder chosen with the picker is copied through real storage first, so no `content://`
+URI is ever handed to the game.
+
+**Google Play:** All files access is a restricted permission. Play's policy limits it to file
+managers, backup/restore, antivirus, document management, on-device search, encryption and device
+migration, and explicitly names user-picked files as a case for the Storage Access Framework instead
+([policy](https://support.google.com/googleplay/android-developer/answer/10467955)). A game installer
+is not on that list, so a Play build should ship without the `uses-permission` line and rely on the
+picker; the app is designed to work fully that way. This port is side-loaded rather than published.
+
 ## How it works
 
 1. `tools/recomp/recomp.py` statically translates the x86 code of the v1.0.1 `VT3.exe` into C.

@@ -151,6 +151,50 @@
                 android:text="@string/step_waiting" />
         </LinearLayout>
 
+        <!-- Storage: the optional all-files gate, the folder source, and where data2 lands. -->
+        <LinearLayout style="@style/Vt3Card">
+
+            <TextView style="@style/Vt3StepLabel" android:text="@string/storage_title" />
+
+            <TextView style="@style/Vt3StepHint" android:text="@string/storage_hint" />
+
+            <Button
+                android:id="@+id/storage_button"
+                style="@style/Vt3Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/storage_allow" />
+
+            <TextView
+                android:id="@+id/storage_state"
+                style="@style/Vt3State"
+                android:text="@string/storage_denied" />
+
+            <Button
+                android:id="@+id/source_button"
+                style="@style/Vt3Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/source_button" />
+
+            <TextView
+                android:id="@+id/source_state"
+                style="@style/Vt3State"
+                android:text="@string/source_disc" />
+
+            <Button
+                android:id="@+id/dest_button"
+                style="@style/Vt3Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/dest_button" />
+
+            <TextView
+                android:id="@+id/dest_state"
+                style="@style/Vt3State"
+                android:text="@string/dest_default" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/install_button"
             style="@style/Vt3Button.Install"

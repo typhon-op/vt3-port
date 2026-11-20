@@ -10,6 +10,7 @@
 #include <android/native_activity.h>
 #include <android/window.h>
 #include <android_native_app_glue.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -107,6 +108,40 @@ static void apply_settings(void)
     }
 }
 
+static int dir_ok(const char *p)
+{
+    DIR *d = opendir(p);
+    if (!d) return 0;
+    closedir(d);
+    return 1;
+}
+
+/* The setup screen can install the game data to a folder of the player's choosing (all files
+ * access) or copy a picked folder into app storage. Either way it writes the real path of the data
+ * root to <root>/game_root, and only that file is consulted here: a content:// URI never reaches
+ * this layer, and a stale path falls back to app storage instead of failing the launch. */
+static void apply_game_root(void)
+{
+    char marker[512], chosen[512] = "";
+    snprintf(marker, sizeof marker, "%s/game_root", VT3_ANDROID_ROOT);
+    FILE *f = fopen(marker, "r");
+    if (f) {
+        if (fgets(chosen, sizeof chosen, f)) {
+            size_t n = strlen(chosen);
+            while (n && (chosen[n - 1] == '\n' || chosen[n - 1] == '\r' || chosen[n - 1] == ' '))
+                chosen[--n] = 0;
+        }
+        fclose(f);
+    }
+    if (chosen[0] == '/' && dir_ok(chosen)) {
+        setenv("VT3_GAME_ROOT", chosen, 1);
+        VT3_INFO("android: game data at %s (chosen in setup)", chosen);
+        return;
+    }
+    if (chosen[0]) VT3_INFO("android: %s is not readable, using app storage", chosen);
+    setenv("VT3_GAME_ROOT", VT3_ANDROID_ROOT "/data2", 1);
+}
+
 void android_main(struct android_app *app)
 {
 #ifdef VT3_PGO_GEN
@@ -118,8 +153,9 @@ void android_main(struct android_app *app)
     apply_settings();
     /* Full screen: the game draws over the whole panel, with no status bar (the activity has no Java). */
     ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_FULLSCREEN, 0);
-    /* Game data: <root>/data2 is the extracted English archive set; <root>/image.bin is the image. */
-    setenv("VT3_GAME_ROOT", VT3_ANDROID_ROOT "/data2", 1);
+    /* Game data: <root>/data2 by default (the extracted English archive set), or the folder setup
+     * recorded in <root>/game_root; <root>/image.bin is always the image. */
+    apply_game_root();
     setenv("VT3_SHADER_PACK", VT3_ANDROID_ROOT "/shaders.pack", 1);
     VT3_INFO("android: running the game from %s", VT3_ANDROID_ROOT);
     int rc = vt3_run(&vt3_mod, VT3_ANDROID_ROOT "/image.bin");

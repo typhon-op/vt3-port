@@ -571,3 +571,70 @@ fresh key would strand any installed copy (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`)
 3. **Nothing in this section proves audio.** Compilation, linking and signing say the code builds for
    ARM64 and packages correctly; they say nothing about whether it sounds right, resumes, or survives
    a Bluetooth route change. Those are still owed to the device checklist.
+
+## Storage access: All files access and the SAF fallback (2026-11-20)
+
+The installer used to need no storage permission at all: the system picker returned a file, its
+descriptor was unpacked into `getExternalFilesDir(null)`, and the native runtime only ever saw that
+path. That stays the default. Two optional shortcuts now sit behind Android 11's **All files access**,
+and a folder picked without that permission is copied instead of read in place.
+
+### What the screen does
+
+- **All files access.** Declared in the manifest, requested only from a button that opens the per-app
+  `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` screen (the whole-list screen is the fallback),
+  and reported with `Environment.isExternalStorageManager()`. That answer is asked of the system in
+  `onResume` every time the player comes back, because opening the settings screen proves nothing.
+  The permission is never requested automatically, and the wording changes once it has been asked
+  so a second look is the player's choice, not a repeated prompt.
+- **Folder source.** With the permission, an in-app browser walks the shared volume and a folder is
+  used where it lies (a real POSIX path, checked for the `Resource` tree). Without it, the same
+  button opens `ACTION_OPEN_DOCUMENT_TREE`, the grant is persisted with
+  `takePersistableUriPermission`, and the tree is copied through `DocumentsContract` into
+  `<install>/data2`. A revoked or deleted tree is detected by a live query — at pick time, on every
+  resume, and again immediately before the copy — and reported as such instead of failing halfway.
+- **Install folder.** `data2` can go to a folder of the player's choice, which needs the same
+  permission because the runtime must be able to open it. The chosen path is written to
+  `<root>/game_root`; `android_entry.c` reads that marker and falls back to `<root>/data2` if the
+  path is gone or unreadable, so a stale marker cannot stop the game launching. `image.bin` and the
+  shader pack stay in app storage.
+
+### Where it is enforced
+
+`install()` refuses to touch anything until every path it will use has been proven: destination
+writable and with 5 GB free, source folder present and readable (or the SAF tree still answering a
+query), and the whole grant re-checked when the destination is outside app storage. `install.ok` is
+written only after `<data2>/Resource` exists, so no code path can report a successful install that
+the runtime cannot read. Every entry point catches `Throwable` and leaves the buttons enabled with a
+message, which is the retry path.
+
+### Policy
+
+All files access is a restricted permission on Google Play. Its policy allows file managers,
+backup/restore, antivirus, document management, on-device search, encryption and device migration,
+and names user-picked files as a case for the Storage Access Framework
+(<https://support.google.com/googleplay/android-developer/answer/10467955>). An installer for a game
+is not on that list, so this project does not assume approval: a Play build should delete the single
+`uses-permission` line and keep the picker path, which needs no permission and is what the code does
+by default. `README.md` states this.
+
+### Verification actually run
+
+- `javac --release 11 -Xlint:all` over every class with the generated `R`: clean, apart from four
+  pre-existing deprecation warnings (`getDefaultDisplay`, `getRealMetrics`, `onBackPressed`).
+- The real packaging path (`android/build_apk.py`) with a placeholder `.so`: `aapt2 compile`/`link`
+  resolves the new card and its ids and strings, `d8` dexes `Installer$Take` and `StorageAccess`, and
+  `apksigner verify` accepts the result. `aapt2 dump permissions` shows exactly one permission,
+  `MANAGE_EXTERNAL_STORAGE`. The shell APK and the throwaway key were deleted afterwards.
+- `android_entry.c` compiles for arm64-v8a with NDK clang, `-Wall -Wextra`, no warnings.
+- The host self-test was not re-run: nothing under `runtime/` other than `android_entry.c` changed,
+  and that file is not part of the host build.
+
+### Not verified, and it matters
+
+No device ran this. The permission flow (grant, deny, revoke while backgrounded), the SAF grant
+surviving a reboot, a copy of a multi-GB folder, and the `game_root` fallback are all unexercised, and
+so is the Android 11-16 range the requirement asks for: only the API-35 `android.jar` and the API-29
+NDK target were available here. Until those run on hardware, treat the storage work as compiled and
+packaged, not as working. A large folder copy also has no resume: an interrupted copy is redone from
+the start on the next attempt.

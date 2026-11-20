@@ -1,6 +1,7 @@
 package net.vt3port.game;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.content.Intent;
 import android.net.Uri;
@@ -16,21 +17,30 @@ import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.MessageDigest;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Launcher. On first run the player picks their PC disc image and the v1.0.1 VT3.exe; this unpacks
- * the game data and builds image.bin in the app's files dir (the VT3_ANDROID_ROOT the game reads),
- * then writes install.ok. Every later launch goes straight to the game.
+ * Launcher. On first run the player picks their PC disc image (or an already-unpacked game folder)
+ * and the v1.0.1 VT3.exe; this unpacks or copies the game data and builds image.bin in the app's
+ * files dir (the VT3_ANDROID_ROOT the game reads), then writes install.ok. Every later launch goes
+ * straight to the game.
+ *
+ * Storage: the picker alone is enough, because whatever it returns is copied into real storage the
+ * runtime can open. All Files Access is optional and only adds two shortcuts — reading an unpacked
+ * folder where it lies, and installing to a folder of the player's choosing. No code path here reads
+ * a content:// URI as if it were a path, and no install writes install.ok without first proving the
+ * data it wrote is complete and readable.
  *
  * The screen is res/layout/activity_installer.xml: a court banner with the VT3 wordmark, one card
- * per file the player supplies, the install button, and a foot strip for progress and messages.
+ * per file the player supplies, a storage card, the install button, and a foot strip for progress.
  */
 public class Installer extends Activity {
     static { System.loadLibrary("vt3install"); }
@@ -41,12 +51,16 @@ public class Installer extends Activity {
 
     /* SHA-256 of the image built from the v1.0.1 VT3.exe the port is translated from. */
     static final String IMAGE_SHA256 = "52be3cda5edb9aa536394fed656e22270d688d74e86db8602fd39a7512fc80bf";
-    static final int PICK_ISO = 1, PICK_ZIP = 2;
+    static final int PICK_ISO = 1, PICK_ZIP = 2, PICK_TREE = 3;
+    /* Room the unpacked game needs, with headroom for the image and the shader pack. */
+    static final long NEED_BYTES = 5L << 30;
+    static final int MAX_DEPTH = 32;
 
     File root;
-    Uri iso, zip;
-    Button isoButton, zipButton, installButton;
-    TextView isoState, exeState, status;
+    Uri iso, zip, sourceTree;
+    File sourceDir, destDir;
+    Button isoButton, zipButton, installButton, storageButton, sourceButton, destButton;
+    TextView isoState, exeState, status, storageState, sourceState, destState;
     ProgressBar bar;
     static final Handler ui = new Handler(Looper.getMainLooper());
     /* The install thread outlives the activity (a recreate, or a relaunch from the icon), so it
@@ -70,15 +84,40 @@ public class Installer extends Activity {
         exeState = findViewById(R.id.exe_state);
         status = findViewById(R.id.status);
         bar = findViewById(R.id.progress);
+        storageButton = findViewById(R.id.storage_button);
+        sourceButton = findViewById(R.id.source_button);
+        destButton = findViewById(R.id.dest_button);
+        storageState = findViewById(R.id.storage_state);
+        sourceState = findViewById(R.id.source_state);
+        destState = findViewById(R.id.dest_state);
         isoButton.setOnClickListener(v -> pick(PICK_ISO));
         zipButton.setOnClickListener(v -> pick(PICK_ZIP));
         installButton.setOnClickListener(v -> install());
+        storageButton.setOnClickListener(v -> askAllFiles());
+        sourceButton.setOnClickListener(v -> pickSource());
+        destButton.setOnClickListener(v -> pickDestination());
+        /* A remembered folder can be gone: unmounted card, app data cleared, folder deleted. */
+        sourceDir = StorageAccess.sourcePath(this);
+        if (sourceDir != null && !StorageAccess.looksInstalled(sourceDir)) {
+            StorageAccess.setSourcePath(this, null);
+            sourceDir = null;
+        }
+        destDir = StorageAccess.destPath(this);
         live = this;
         if (busy) {
             isoButton.setEnabled(false);
             zipButton.setEnabled(false);
             status.setText(R.string.setup_running);
         }
+        refreshStorage();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        /* Coming back from the system settings screen proves nothing by itself, so the grant is
+         * asked of the system again here, every time. */
+        refreshStorage();
     }
 
     @Override
@@ -112,41 +151,202 @@ public class Installer extends Activity {
             exeState.setText(R.string.step2_done);
             exeState.setTextColor(getColor(R.color.vt3_ball));
         }
-        installButton.setEnabled(iso != null && zip != null);
+        if (code == PICK_TREE) {
+            Uri tree = data.getData();
+            if (tree == null) return;
+            StorageAccess.remember(this, tree, data);
+            /* Remembering is not the same as being allowed: ask the provider, now. */
+            if (StorageAccess.granted(this, tree) && StorageAccess.listable(this, tree)) {
+                sourceTree = tree;
+                sourceDir = null;
+                StorageAccess.setSourcePath(this, null);
+                status.setText(R.string.source_tree_ready);
+            } else {
+                StorageAccess.forget(this, tree);
+                sourceTree = null;
+                status.setText(R.string.source_tree_failed);
+            }
+        }
+        refreshStorage();
     }
 
-    void install() {
+    /* ---- storage UI ---- */
+
+    void refreshStorage() {
+        if (storageButton == null || busy) return;
+        boolean all = StorageAccess.allFiles(this);
+        storageState.setText(all ? R.string.storage_granted
+                : StorageAccess.asked(this) ? R.string.storage_denied_asked : R.string.storage_denied);
+        storageState.setTextColor(getColor(all ? R.color.vt3_ball : R.color.vt3_muted));
+        storageButton.setText(all ? R.string.storage_check : R.string.storage_allow);
+        if (sourceDir != null) {
+            sourceState.setText(getString(R.string.source_using, sourceDir.getAbsolutePath()));
+        } else if (sourceTree != null) {
+            if (StorageAccess.granted(this, sourceTree) && StorageAccess.listable(this, sourceTree)) {
+                sourceState.setText(R.string.source_tree);
+            } else {
+                /* Revoked or deleted since it was picked: say so instead of failing at the end. */
+                StorageAccess.forget(this, sourceTree);
+                sourceTree = null;
+                sourceState.setText(R.string.source_tree_lost);
+                status.setText(R.string.source_tree_lost);
+            }
+        } else {
+            sourceState.setText(R.string.source_disc);
+        }
+        destState.setText(destDir == null ? getString(R.string.dest_default) : destDir.getAbsolutePath());
+        installButton.setEnabled(canInstall());
+    }
+
+    boolean canInstall() {
+        boolean haveGame = iso != null || sourceDir != null || sourceTree != null;
+        return !busy && haveGame && zip != null;
+    }
+
+    /** The system settings screen, opened only because the player asked for it. */
+    void askAllFiles() {
         if (busy) return;
+        if (!StorageAccess.allFilesSupported()) {
+            status.setText(R.string.storage_old);
+            return;
+        }
+        if (StorageAccess.allFiles(this)) { /* already allowed: just re-read the state */
+            refreshStorage();
+            return;
+        }
+        StorageAccess.markAsked(this);
+        try {
+            startActivity(StorageAccess.settings(this));
+            status.setText(R.string.storage_howto);
+        } catch (Throwable e) {
+            status.setText(R.string.storage_no_settings);
+        }
+    }
+
+    void pickSource() {
+        if (busy) return;
+        if (StorageAccess.allFiles(this)) {
+            browse(StorageAccess.sharedRoot(), dir -> {
+                if (!StorageAccess.looksInstalled(dir)) {
+                    status.setText(getString(R.string.source_not_install, dir.getAbsolutePath()));
+                    return;
+                }
+                sourceDir = dir;      /* a real path: the runtime reads it in place, nothing copied */
+                sourceTree = null;
+                StorageAccess.setSourcePath(this, dir);
+                status.setText(getString(R.string.source_using, dir.getAbsolutePath()));
+                refreshStorage();
+            });
+            return;
+        }
+        /* No broad access: the picker's own grant is enough, and the copy lands in real storage. */
+        try {
+            startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_TREE);
+        } catch (Throwable e) {
+            status.setText(R.string.storage_no_picker);
+        }
+    }
+
+    void pickDestination() {
+        if (busy) return;
+        if (!StorageAccess.allFiles(this)) {
+            /* Said, not silently ignored; the settings button beside it is the way forward. */
+            status.setText(R.string.dest_needs_access);
+            return;
+        }
+        browse(StorageAccess.sharedRoot(), dir -> {
+            if (StorageAccess.freeBytes(dir) < NEED_BYTES) {
+                status.setText(R.string.dest_no_space);
+                return;
+            }
+            destDir = dir;
+            StorageAccess.setDestPath(this, dir);
+            refreshStorage();
+        });
+    }
+
+    interface Take {
+        void dir(File f);
+    }
+
+    /** A plain folder browser, only reachable with All Files Access. Never runs on a URI. */
+    void browse(File start, Take take) {
+        File dir = StorageAccess.readable(start) ? start : StorageAccess.sharedRoot();
+        showBrowser(dir, take);
+    }
+
+    void showBrowser(File dir, Take take) {
+        List<File> dirs = StorageAccess.dirs(dir);
+        final String[] names = new String[dirs.size() + 1];
+        names[0] = getString(R.string.browse_here);
+        for (int i = 0; i < dirs.size(); i++) names[i + 1] = dirs.get(i).getName();
+        new AlertDialog.Builder(this)
+                .setTitle(dir.getAbsolutePath())
+                .setItems(names, (d, which) -> {
+                    if (which == 0) {
+                        take.dir(dir);
+                        return;
+                    }
+                    File next = dirs.get(which - 1);
+                    if (dir.getParentFile() == null) return; /* never climb above the volume */
+                    showBrowser(next, take);
+                })
+                .setNeutralButton(R.string.browse_up, (d, w) -> {
+                    File up = dir.getParentFile();
+                    if (up != null && StorageAccess.readable(up)) showBrowser(up, take);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /* ---- install ---- */
+
+    void install() {
+        if (!canInstall()) return;
         busy = true;
         isoButton.setEnabled(false);
         zipButton.setEnabled(false);
         installButton.setEnabled(false);
+        storageButton.setEnabled(false);
+        sourceButton.setEnabled(false);
+        destButton.setEnabled(false);
         bar.setVisibility(View.VISIBLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         new Thread(() -> {
             try {
+                /* Everything below works on real paths. Prove each one is usable before touching it. */
+                File base = destDir != null ? destDir : root;
+                if (destDir != null && !StorageAccess.inAppStorage(this, destDir)
+                        && !StorageAccess.allFiles(this))
+                    throw new IOException(getString(R.string.dest_needs_access));
+                if (!base.isDirectory() && !base.mkdirs())
+                    throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
+                if (!StorageAccess.readable(base))
+                    throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
+                if (StorageAccess.freeBytes(base) < NEED_BYTES)
+                    throw new IOException(getString(R.string.dest_no_space));
+                if (sourceDir != null && !StorageAccess.looksInstalled(sourceDir))
+                    throw new IOException(getString(R.string.source_not_install, sourceDir.getAbsolutePath()));
+                if (sourceDir == null && sourceTree == null && iso == null)
+                    throw new IOException(getString(R.string.install_bad));
+                if (sourceTree != null && !(StorageAccess.granted(this, sourceTree)
+                        && StorageAccess.listable(this, sourceTree)))
+                    throw new IOException(getString(R.string.source_tree_lost));
+
                 say(getString(R.string.checking_exe));
                 buildImage();
-                Runnable[] tick = new Runnable[1];
-                tick[0] = () -> {
-                    int permille = progress();
-                    bar.setProgress(permille);
-                    status.setText(getString(R.string.unpacking) + permille / 10 + "%");
-                    ui.postDelayed(tick[0], 500);
-                };
-                ui.post(tick[0]);
-                int rc;
-                try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(iso, "r")) {
-                    rc = extractIso(pfd.getFd(), new File(root, "data2").getPath());
-                } finally {
-                    ui.removeCallbacks(tick[0]);
+
+                File data2 = new File(base, "data2");
+                if (sourceDir != null || sourceTree != null) {
+                    copyGame(data2);
+                } else {
+                    unpackDisc(data2);
                 }
-                if (rc == -1) throw new IOException("That file is not a disc image (.iso).");
-                if (rc == -2) throw new IOException("No Virtua Tennis 3 PC install files on that disc image.");
-                if (rc < 0) throw new IOException("Unpacking failed. Check there is about 4.5 GB free.");
-                /* Another game's InstallShield disc unpacks fine, and install.ok would make that stick. */
-                if (!new File(root, "data2/Resource").isDirectory())
-                    throw new IOException("No Virtua Tennis 3 PC install files on that disc image.");
+                /* The one thing worth insisting on: the tree the game looks for is really there. */
+                say(getString(R.string.verifying));
+                if (!new File(data2, "Resource").isDirectory())
+                    throw new IOException(getString(R.string.install_bad));
+                writeGameRoot(base, data2);
                 try (FileOutputStream o = new FileOutputStream(new File(root, "install.ok"))) { o.getFD().sync(); }
                 ui.post(() -> { busy = false; Installer a = live; if (a != null) a.launch(); });
             } catch (Throwable e) { /* an Error (OutOfMemoryError) must not kill the thread silently */
@@ -158,17 +358,97 @@ public class Installer extends Activity {
                     a.status.setText("Setup failed: " + e.getMessage());
                     a.isoButton.setEnabled(true);
                     a.zipButton.setEnabled(true);
-                    a.installButton.setEnabled(a.iso != null && a.zip != null);
+                    a.storageButton.setEnabled(true);
+                    a.sourceButton.setEnabled(true);
+                    a.destButton.setEnabled(true);
+                    a.installButton.setEnabled(a.canInstall());
                     a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 });
             }
         }).start();
     }
 
+    /* The disc image path: unshield unpacks the cabinets straight out of the picked descriptor. */
+    void unpackDisc(File data2) throws Exception {
+        ui.post(() -> bar.setIndeterminate(false));
+        Runnable[] tick = new Runnable[1];
+        tick[0] = () -> {
+            int permille = progress();
+            bar.setProgress(permille);
+            status.setText(getString(R.string.unpacking) + permille / 10 + "%");
+            ui.postDelayed(tick[0], 500);
+        };
+        ui.post(tick[0]);
+        int rc;
+        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(iso, "r")) {
+            if (pfd == null) throw new IOException("That disc image cannot be opened.");
+            rc = extractIso(pfd.getFd(), data2.getPath());
+        } finally {
+            ui.removeCallbacks(tick[0]);
+        }
+        if (rc == -1) throw new IOException("That file is not a disc image (.iso).");
+        if (rc == -2) throw new IOException("No Virtua Tennis 3 PC install files on that disc image.");
+        if (rc < 0) throw new IOException("Unpacking failed. Check there is about 4.5 GB free.");
+    }
+
+    /* The folder path: in place when it is already a real path, through a copy when it came from
+     * the picker. Either way this ends with a plain directory tree in real storage. */
+    void copyGame(File data2) throws IOException {
+        /* The bar is a view: the copy runs off the UI thread, so every touch of it is posted. */
+        ui.post(() -> {
+            bar.setProgress(0);
+            bar.setIndeterminate(true);
+        });
+        if (sourceDir != null) {
+            copyDir(sourceDir, data2, 0, new long[] { 0 });
+        } else {
+            StorageAccess.copyTree(this, sourceTree, data2, (bytes, name) ->
+                    say(getString(R.string.copying) + (bytes >> 20) + " MB"));
+        }
+        ui.post(() -> bar.setIndeterminate(false));
+    }
+
+    static void copyDir(File src, File dst, int depth, long[] bytes) throws IOException {
+        if (depth > MAX_DEPTH) throw new IOException("That folder is nested too deeply.");
+        File[] all = src.listFiles();
+        if (all == null) throw new IOException("Cannot read " + src.getName());
+        if (!dst.isDirectory() && !dst.mkdirs()) throw new IOException("Cannot create " + dst);
+        for (File f : all) {
+            File out = new File(dst, f.getName());
+            if (f.isDirectory()) {
+                copyDir(f, out, depth + 1, bytes);
+            } else if (f.isFile()) {
+                try (InputStream in = new FileInputStream(f); OutputStream o = new FileOutputStream(out)) {
+                    byte[] b = new byte[1 << 16];
+                    for (int n; (n = in.read(b)) > 0; ) {
+                        o.write(b, 0, n);
+                        bytes[0] += n;
+                    }
+                }
+            }
+            /* Anything else (a fifo, a socket, a device node) is not game data: skip it. */
+        }
+    }
+
+    /* The runtime reads the image from app storage and the data from game_root, which is only
+     * written when the player chose another folder. */
+    void writeGameRoot(File base, File data2) throws IOException {
+        File marker = new File(root, "game_root");
+        if (destDir == null) {
+            if (marker.exists() && !marker.delete()) throw new IOException("Cannot clear " + marker);
+            return;
+        }
+        try (FileOutputStream o = new FileOutputStream(marker)) {
+            o.write(data2.getAbsolutePath().getBytes());
+            o.getFD().sync();
+        }
+    }
+
     /* VT3.exe may be picked bare or inside a zip. */
     void buildImage() throws Exception {
         byte[] exe;
         try (InputStream in = getContentResolver().openInputStream(zip)) {
+            if (in == null) throw new IOException("That VT3.exe cannot be opened.");
             exe = readAll(in);
         }
         if (exe.length > 1 && exe[0] == 'P' && exe[1] == 'K') {
