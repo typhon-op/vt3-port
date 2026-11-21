@@ -14,11 +14,11 @@ inputs in three places, in order, and reports in `BUILD_INFO.txt` which one it u
 | --- | --- | --- | --- | --- |
 | 1 | **Actions cache**, key `vt3-translated-52be3cda…fc80bf` | `build/game`, `build/shaders.pack` | GitHub, private to this repository | Refilled automatically by any run that restores the inputs (see below) |
 | 2 | **Release asset**, tag `build-inputs`, asset `vt3-translated-inputs.tar.gz` | the same two paths, plus a `sha256sum` line in the run log | A release in this private repository (up to 2 GB per asset, no 100 MB git limit) | `Run workflow` with **publish_inputs** ticked, from a run that has `build/game` |
-| 3 | **`prebuilt/`** in the repository | `libvt3android.so` (14.7 MB), `shaders.pack` (5.2 MB), `SHA256SUMS.txt` | Git, private repository only | Committed once from a working build (`prebuilt/README.md`) |
+| 3 | **Private inputs repository**, `typhon-op/vt3-build-inputs` | `libvt3android.so` (14.7 MB), `shaders.pack` (5.2 MB), `SHA256SUMS.txt`, `BUILD_INFO.txt` | A separate **private** GitHub repository | Pushed once from a workspace that holds a working build; CI reads it with a read-only token |
 
-All three are game-derived. All three are only legitimate while the repository is private, which is
-why the workflow's first job refuses to run on a public repository instead of quietly publishing an
-APK that contains translated Sega code.
+All three are game-derived. Stores 1 and 2 only exist while this repository is private, and store
+3 is a private repository of its own, which is why the compiled library never has to enter this
+repository's history: the workflow's first job refuses to build here while it is public.
 
 ## 2. What the workflow does, including cache misses
 
@@ -27,7 +27,7 @@ cache restore ──hit──> build/game + shaders.pack ──> mode "translate
       │
       └──miss──> release asset download ──found──> build/game + shaders.pack ──> mode "translated"
                         │                              (then refill the cache)
-                        └──not found──> prebuilt/ present? ──yes──> mode "prebuilt"
+                        └──not found──> private inputs repository has the library? ──yes──> mode "prebuilt"
                                                      └──no───> fail, with the checklist
 ```
 
@@ -37,9 +37,9 @@ cache restore ──hit──> build/game + shaders.pack ──> mode "translate
   itself.
 - With neither store, the run fails at the "Select the build inputs" step and names what is missing.
   It never builds an APK from a partial or wrong input: `build/game/image.bin` must hash to
-  `52be3cda5edb9aa536394fed656e22270d688d74e86db8602fd39a7512fc80bf`, and `prebuilt/` must match its
-  own `SHA256SUMS.txt` — and the library extracted from the finished APK is compared to that hash a
-  second time.
+  `52be3cda5edb9aa536394fed656e22270d688d74e86db8602fd39a7512fc80bf`, and the library from the inputs
+  repository must match that repository's `SHA256SUMS.txt` — and the library extracted from the
+  finished APK is compared to that hash a second time.
 
 ## 3. What each mode rebuilds
 
@@ -72,18 +72,36 @@ tag → Attach binaries**), or commit the two paths to the private repository an
 **publish_inputs** ticked. The next run then restores them, refills the cache, and switches to
 `translated` mode by itself. Nothing in the workflow has to change.
 
-To refresh `prebuilt/` after a native change, take the library from a `translated` run's APK:
+To refresh store 3 after a native change, take the library from a `translated` run's APK and push
+it to the private inputs repository:
 
 ```sh
-unzip -p VT3-Android.apk lib/arm64-v8a/libvt3android.so > prebuilt/libvt3android.so
-cd prebuilt && sha256sum libvt3android.so shaders.pack > SHA256SUMS.txt
+unzip -p VT3-Android.apk lib/arm64-v8a/libvt3android.so > libvt3android.so
+unzip -p VT3-Android.apk assets/shaders.pack              > shaders.pack
+sha256sum libvt3android.so shaders.pack > SHA256SUMS.txt
+git add libvt3android.so shaders.pack SHA256SUMS.txt BUILD_INFO.txt
+git commit -m "Refresh the pinned library" && git push
 ```
 
-## 5. Privacy
+## 5. Reading the private repository from CI
+
+The workflow checks `typhon-op/vt3-build-inputs` out with `actions/checkout` and the repository
+secret `BUILD_INPUTS_TOKEN`, at path `ci-inputs`, and verifies it with `sha256sum -c` before the
+build. That token is a fine-grained personal access token with **Contents: Read-only** on that one
+repository and nothing else; it is never written into a file, an artifact or a log, and the checkout
+runs with `persist-credentials: false`. Without the secret (or if it expires) the checkout is skipped
+with a notice and the run stops at "Select the build inputs" naming the missing store — it never
+builds from an unverified library.
+
+This repository needs no other access: it never writes to the inputs repository, and the inputs
+repository never writes to this one.
+
+## 6. Privacy
 
 - Nothing game-derived is ever fetched from a public URL, and no executable is downloaded by any job.
-- The release asset, the cache and `prebuilt/` are readable only by people who can read this
-  repository, and the workflow refuses to run while it is public.
+- The release asset and the cache are readable only by people who can read this repository; the
+  pinned library lives in the private `vt3-build-inputs` repository; and the workflow refuses to run
+  while this repository is public.
 - Artifacts are checked before upload: the APK plus `SHA256SUMS.txt` and `BUILD_INFO.txt`, nothing
   else, and the job fails if an executable, image, archive, C source or library would slip in.
 - The keystore and its passwords live in the repository secret `ANDROID_DEBUG_KEYSTORE_B64`, never in

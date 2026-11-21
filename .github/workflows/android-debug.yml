@@ -17,12 +17,19 @@ name: VT3 Android Debug
 #
 #   1. the Actions cache      key "vt3-translated-<image hash>": build/game + build/shaders.pack
 #   2. the release asset      tag "build-inputs", asset "vt3-translated-inputs.tar.gz" (same files)
-#   3. prebuilt/ in the repo  libvt3android.so + shaders.pack, hashes in prebuilt/SHA256SUMS.txt
+#   3. the private inputs repository  typhon-op/vt3-build-inputs: libvt3android.so,
+#                                     shaders.pack and SHA256SUMS.txt, read with a read-only token
 #
 # 1 and 2 hold the translated C source, so the ARM64 library, the runtime and the translated game
 # are compiled in the run. 3 holds only the compiled library: everything Android (Java,
 # resources, manifest, installer) is rebuilt around it, but native changes are not recompiled --
 # BUILD_INFO.txt says which mode produced the APK, and the README says what mode 3 covers.
+#
+# Store 3 lives outside this repository so that this one can stay a source-only repository even
+# when the compiled game code has to be kept somewhere. It is read with the repository secret
+# BUILD_INPUTS_TOKEN (fine-grained, Contents: Read-only, that repository only); the token is used
+# by the checkout and by nothing else, and the downloaded files are verified against the
+# repository's own SHA256SUMS.txt before the build starts.
 #
 # Signing always uses the preserved identity, so a new APK installs over the one already on the
 # phone (no uninstall, no lost game data): the keystore comes from the repository secret
@@ -71,6 +78,8 @@ env:
   CERT_SHA256: 6150e1f4d5a195bccf53cc61c1a5384c4f6bc458c5f85dd3c40db18be44607d0
   INPUTS_TAG: build-inputs
   INPUTS_ASSET: vt3-translated-inputs.tar.gz
+  INPUTS_REPO: typhon-op/vt3-build-inputs
+  INPUTS_REF: main
   ANDROID_API: "35"
   BUILD_TOOLS: "36.1.0"
   NDK_VERSION: "30.0.16248370"
@@ -131,15 +140,31 @@ jobs:
         run: |
           set -euo pipefail
           if ! gh release view "$INPUTS_TAG" > /dev/null 2>&1; then
-            echo "::notice title=No release asset::There is no '$INPUTS_TAG' release holding $INPUTS_ASSET, so the build will use the preserved library in prebuilt/."
+            echo "::notice title=No release asset::There is no '$INPUTS_TAG' release holding $INPUTS_ASSET, so the build will use the pinned library in $INPUTS_REPO."
             exit 0
           fi
           if ! gh release download "$INPUTS_TAG" --pattern "$INPUTS_ASSET" --dir "$RUNNER_TEMP/ci-inputs"; then
-            echo "::notice title=No translated inputs in the release::$INPUTS_TAG has no $INPUTS_ASSET asset, so the build will use prebuilt/."
+            echo "::notice title=No translated inputs in the release::$INPUTS_TAG has no $INPUTS_ASSET asset, so the build will use the pinned library in $INPUTS_REPO."
             exit 0
           fi
           tar -xzf "$RUNNER_TEMP/ci-inputs/$INPUTS_ASSET" -C .
           ls -l build/game build/shaders.pack
+
+      # The durable home of the compiled game code: a separate private repository, so that no
+      # game-derived machine code ever has to sit in this repository's history. A missing token or
+      # an unreachable repository is not fatal here; the next step names what is missing.
+      - name: Check out the private build inputs
+        id: inputs_repo
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INPUTS_REPO }}
+          ref: ${{ env.INPUTS_REF }}
+          token: ${{ secrets.BUILD_INPUTS_TOKEN }}
+          path: ci-inputs
+          fetch-depth: 1
+          persist-credentials: false
 
       # Decide, once, what this run builds from, and say it in the log and the run summary.
       - name: Select the build inputs
@@ -148,6 +173,9 @@ jobs:
           set -euo pipefail
           mode=""
           have_translation=false
+          input_lib=""
+          input_pack=""
+          input_sums=""
           if [ -s build/game/vt3.c ] && [ -s build/game/image.bin ] && [ -s build/shaders.pack ]; then
             actual=$(sha256sum build/game/image.bin | cut -d' ' -f1)
             echo "translated image.bin sha256: $actual"
@@ -158,22 +186,30 @@ jobs:
             mode=translated
             have_translation=true
             detail="build/game/vt3.c + image.bin (hash verified) and build/shaders.pack: the ARM64 library, the runtime and the translated game are compiled in this run"
-          elif [ -s prebuilt/libvt3android.so ] && [ -s prebuilt/shaders.pack ]; then
-            if [ ! -s prebuilt/SHA256SUMS.txt ]; then
-              echo "::error title=No hashes for prebuilt/::prebuilt/SHA256SUMS.txt is missing, so the preserved library cannot be verified. Create it with 'cd prebuilt && sha256sum libvt3android.so shaders.pack > SHA256SUMS.txt'."
+          elif [ -s ci-inputs/libvt3android.so ] && [ -s ci-inputs/shaders.pack ]; then
+            if [ ! -s ci-inputs/SHA256SUMS.txt ]; then
+              echo "::error title=No hashes in the inputs repository::$INPUTS_REPO has the library but no SHA256SUMS.txt, so it cannot be verified. Add it with 'cd vt3-build-inputs && sha256sum libvt3android.so shaders.pack > SHA256SUMS.txt'."
               exit 1
             fi
-            ( cd prebuilt && sha256sum -c --strict SHA256SUMS.txt )
+            ( cd ci-inputs && sha256sum -c --strict SHA256SUMS.txt )
             mode=prebuilt
-            detail="prebuilt/libvt3android.so and prebuilt/shaders.pack (hashes verified): the Java UI, resources, manifest and installer are rebuilt in this run, the native runtime and translated game are not"
-            echo "::notice title=No translated C source::Building from prebuilt/libvt3android.so. Android-side changes ship; changes under runtime/ or tools/recomp/ need the translated source (docs/BUILD_INPUTS.md)."
+            input_lib=ci-inputs/libvt3android.so
+            input_pack=ci-inputs/shaders.pack
+            input_sums=ci-inputs/SHA256SUMS.txt
+            detail="libvt3android.so and shaders.pack from the private $INPUTS_REPO (hashes verified): the Java UI, resources, manifest and installer are rebuilt in this run, the native runtime and translated game are not"
+            echo "::notice title=No translated C source::Building from the pinned library in $INPUTS_REPO. Android-side changes ship; changes under runtime/ or tools/recomp/ need the translated source (docs/BUILD_INPUTS.md)."
           else
-            echo "::error title=No build inputs::This run has neither the translated game (build/game + build/shaders.pack, from the cache or the '$INPUTS_TAG' release) nor the preserved library (prebuilt/libvt3android.so + prebuilt/shaders.pack). See docs/BUILD_INPUTS.md: publish the translated inputs once, or restore prebuilt/ from the private store."
+            echo "::error title=No build inputs::This run has none of the three stores: no translated game in the Actions cache or on the '$INPUTS_TAG' release, and no library in the private $INPUTS_REPO (a missing or expired BUILD_INPUTS_TOKEN also lands here -- check that the secret exists and can read that repository). See docs/BUILD_INPUTS.md."
             exit 1
           fi
           echo "build_mode=$mode" >> "$GITHUB_OUTPUT"
           echo "have_translation=$have_translation" >> "$GITHUB_OUTPUT"
-          echo "BUILD_MODE=$mode" >> "$GITHUB_ENV"
+          {
+            echo "BUILD_MODE=$mode"
+            echo "INPUT_LIB=${input_lib:-}"
+            echo "INPUT_PACK=${input_pack:-}"
+            echo "INPUT_SUMS=${input_sums:-}"
+          } >> "$GITHUB_ENV"
           {
             echo "### Build inputs"
             echo ""
@@ -278,7 +314,7 @@ jobs:
           if [ "$BUILD_MODE" = translated ]; then
             python3 -u build.py android --game build/game --shaders build/shaders.pack
           else
-            python3 -u build.py android --so prebuilt/libvt3android.so --shaders prebuilt/shaders.pack
+            python3 -u build.py android --so "$INPUT_LIB" --shaders "$INPUT_PACK"
           fi
 
       - name: Verify alignment, signature, package, architecture and diagnostics
@@ -319,12 +355,12 @@ jobs:
 
           if [ "$BUILD_MODE" = prebuilt ]; then
             shipped=$(sha256sum "$RUNNER_TEMP/libvt3android.so" | cut -d' ' -f1)
-            expected=$(sed -n 's/^\([0-9a-f]\{64\}\)[[:space:]]*libvt3android.so$/\1/p' prebuilt/SHA256SUMS.txt)
+            expected=$(sed -n 's/^\([0-9a-f]\{64\}\)[[:space:]]*libvt3android.so$/\1/p' "$INPUT_SUMS")
             if [ -z "$expected" ] || [ "$shipped" != "$expected" ]; then
-              echo "::error title=Wrong library in the APK::the packaged library is $shipped, prebuilt/SHA256SUMS.txt says '${expected:-nothing}'."
+              echo "::error title=Wrong library in the APK::the packaged library is $shipped, the inputs repository's SHA256SUMS.txt says '${expected:-nothing}'."
               exit 1
             fi
-            echo "library: byte-identical to prebuilt/libvt3android.so ($shipped)"
+            echo "library: byte-identical to the pinned libvt3android.so ($shipped)"
           fi
 
           unzip -p "$APK" classes.dex > "$RUNNER_TEMP/classes.dex"
@@ -352,9 +388,9 @@ jobs:
             NATIVE_LINE="compiled from those inputs in this run"
             NATIVE_TEST="recompiles and ships the native sources of this commit"
           else
-            INPUTS_LINE="prebuilt/libvt3android.so + prebuilt/shaders.pack, hashes in"
-            NATIVE_LINE="prebuilt/SHA256SUMS.txt, verified again inside the signed APK"
-            NATIVE_TEST="builds and runs, but the shipped library is the preserved one, not this commit's"
+            INPUTS_LINE="libvt3android.so + shaders.pack from the private ${INPUTS_REPO}, hashes in"
+            NATIVE_LINE="its SHA256SUMS.txt, verified again inside the signed APK"
+            NATIVE_TEST="builds and runs, but the shipped library is the pinned one, not this commit's"
           fi
 
           {
@@ -456,7 +492,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$BUILD_MODE" != translated ]; then
-            echo "::error title=Nothing to publish::This run built from prebuilt/, so it has no translated inputs. Run the workflow from a commit that has build/game (see docs/BUILD_INPUTS.md)."
+            echo "::error title=Nothing to publish::This run built from the pinned library, so it has no translated inputs. Run the workflow from a commit that has build/game (see docs/BUILD_INPUTS.md)."
             exit 1
           fi
           tar -czf "$RUNNER_TEMP/$INPUTS_ASSET" build/game build/shaders.pack
@@ -472,5 +508,5 @@ jobs:
       - name: Remove the build output
         if: always()
         run: |
-          rm -rf build artifact
-          echo "removed the build output; the cache, the release asset and prebuilt/ were left untouched"
+          rm -rf build artifact ci-inputs
+          echo "removed the build output and the checked-out inputs; the cache and the release asset were left untouched"

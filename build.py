@@ -6,7 +6,7 @@ Usage:
   python build.py android --exe VT3.exe            -> build/android/VT3-Android.apk   (macOS, Linux, Windows)
   python build.py android --game build/game --shaders build/shaders.pack
                                                    -> the same APK, from preserved outputs, no retranslation
-  python build.py android --so prebuilt/libvt3android.so --shaders prebuilt/shaders.pack
+  python build.py android --so libvt3android.so --shaders shaders.pack
                                                    -> the same APK around a library built earlier, no game file at all
   python build.py inputs  --exe VT3.exe            -> build/game (vt3.c, image.bin) + build/shaders.pack
   python build.py macos   --exe VT3.exe --iso DISC  -> build/macos/VT3.app            (macOS only)

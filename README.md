@@ -107,7 +107,7 @@ never commit them. If the translation itself is gone and only a library built ea
 APK can still be repackaged around it, without a game file of any kind:
 
 ```sh
-python build.py android --so prebuilt/libvt3android.so --shaders prebuilt/shaders.pack
+python build.py android --so libvt3android.so --shaders shaders.pack
 ```
 
 That rebuilds the Android side (Java, resources, manifest, installer) and not the native runtime.
@@ -134,16 +134,18 @@ prerequisites:
    job refuses to build there and says so in the log. `Settings → General → Danger Zone → Change
    repository visibility → Private`.
 2. **The build inputs must be in one of the private stores.** The workflow takes the first that is
-   available: the Actions cache, then the `build-inputs` release asset, then `prebuilt/` in the
-   repository. If the translated C source is present (`build/game`) the ARM64 library, runtime and
-   game are compiled in the run; with only `prebuilt/libvt3android.so` it rebuilds everything else
-   (Java UI, resources, manifest, on-device installer) around that library. `BUILD_INFO.txt` states
-   which mode produced the APK, and `docs/BUILD_INPUTS.md` explains all three stores, cache-miss
-   handling and how to refresh them.
+   available: the Actions cache, then the `build-inputs` release asset, then the private
+   `typhon-op/vt3-build-inputs` repository (read with the read-only secret `BUILD_INPUTS_TOKEN`).
+   If the translated C source is present (`build/game`) the ARM64 library, runtime and game are
+   compiled in the run; with only the pinned `libvt3android.so` it rebuilds everything else (Java
+   UI, resources, manifest, on-device installer) around that library. `BUILD_INFO.txt` states which
+   mode produced the APK, and `docs/BUILD_INPUTS.md` explains all three stores, cache-miss handling
+   and how to refresh them.
 
 The run installs JDK 21, the SDK packages, `build-tools;36.1.0` and `ndk;30.0.16248370`; restores
-the inputs and validates them (the translated image against `52be3cda…fc80bf`, `prebuilt/` against
-its own `SHA256SUMS.txt`); runs the native and Java diagnostics tests; builds, packages and signs;
+the inputs and validates them (the translated image against `52be3cda…fc80bf`, the pinned library
+against the inputs repository's `SHA256SUMS.txt`); runs the native and Java diagnostics tests;
+builds, packages and signs;
 and verifies `zipalign -c -p 4`, `apksigner verify` plus the signer's certificate digest,
 `net.vt3port.game`, the `arm64-v8a` ELF64 AArch64 library with its four entry symbols, and the eight
 diagnostics classes with `VT3_Diagnostic_Report.txt` in the shipped dex. The upload holds only the

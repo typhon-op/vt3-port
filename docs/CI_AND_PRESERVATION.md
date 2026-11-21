@@ -70,16 +70,17 @@ is the full account. In short, the CI takes the first of these that exists:
 2. **Release asset** `vt3-translated-inputs.tar.gz` on the `build-inputs` tag, a release in this
    private repository: the durable copy of the same two paths, refilled by a run with
    `publish_inputs` ticked.
-3. **`prebuilt/`** in the repository: `libvt3android.so` + `shaders.pack`, hashes in
-   `prebuilt/SHA256SUMS.txt`. No translated C source, so it rebuilds everything Android around the
-   preserved library instead of recompiling the native runtime.
+3. **The private inputs repository** `typhon-op/vt3-build-inputs`: `libvt3android.so`, `shaders.pack`,
+   `SHA256SUMS.txt` and `BUILD_INFO.txt`. No translated C source, so it rebuilds everything Android
+   around the pinned library instead of recompiling the native runtime. CI reads it with the
+   read-only secret `BUILD_INPUTS_TOKEN`.
 
 With none of them the run stops at "Select the build inputs" and says what to restore; it never
-builds from a partial or wrong input. The private cloud workspace of the session that produced the
-current APK (`artifacts/`, not committed) still holds `build-inputs/libvt3android.so`,
-`build-inputs/shaders.pack`, the signed APK and its `BUILD_INFO.txt`; that is where the two files for
-store 3 come from. The translated C source is not there: it was deleted with the build tree as
-instructed, and it can only be regenerated from `VT3.exe`.
+builds from a partial or wrong input. The private inputs repository holds the two files for store 3,
+together with their hashes and a `BUILD_INFO.txt` describing how they were produced. Copies also
+remain in the cloud workspace of the session that produced the current APK (`artifacts/`, not
+committed). The translated C source is not there: it was deleted with the build tree as instructed,
+and it can only be regenerated from `VT3.exe`.
 
 ## 3. The signing identity
 
@@ -106,8 +107,9 @@ Workflow: `.github/workflows/android-debug.yml`, entirely on GitHub-hosted runne
 
 The `build` job installs JDK 21, the Android command line tools, `platforms;android-35`,
 `build-tools;36.1.0` and `ndk;30.0.16248370`; restores the inputs in the order listed in section 2
-and validates them (translated `image.bin` against the supported hash, `prebuilt/` against its own
-`SHA256SUMS.txt`, and the library inside the finished APK against that hash again); sets the
+and validates them (translated `image.bin` against the supported hash, the pinned library against the
+inputs repository's `SHA256SUMS.txt`, and the library inside the finished APK against that hash
+again); sets the
 `versionCode`; runs the native and Java diagnostics tests; builds, packages and signs; verifies
 alignment, signature and certificate, package name, `arm64-v8a`, the exported native symbols and the
 diagnostics classes; writes `SHA256SUMS.txt` and `BUILD_INFO.txt`; and uploads the artifact. A run
@@ -139,20 +141,27 @@ code and the `+ci.<run>` version name each artifact was built with.
 - No device or emulator is available in the cloud workspace, so nothing here proves the game runs:
   launch, Vulkan, audio, touch controls, the diagnostics screen and saving/sharing the report are
   still owed on hardware.
-- **The repository is public today** (`isPrivate: false`), and that is the one thing blocking the
-  whole pipeline: the APK and any committed translated output contain code and shader data
-  generated from Virtua Tennis 3, so publishing them from a public repository is exactly what the
-  project rules forbid. The `guard` job therefore refuses to build. Make it private
-  (Settings → General → Danger Zone → Change repository visibility → Private) and the same
-  workflow, unchanged, starts producing APKs.
-- **The signing secret does not exist yet.** Add `ANDROID_DEBUG_KEYSTORE_B64` (base64 of
-  `debug.keystore`) under Settings → Secrets and variables → Actions. The job stops with that
-  instruction rather than signing with a new key, which could not install as an update.
-- **`prebuilt/` is empty.** `prebuilt/README.md` explains what goes in it and how to produce the two
-  files from an existing APK; doing it in a private repository makes every push build an APK with
-  no other input. With the translated C source published instead, the workflow compiles the native
-  side too — that is the mode to aim for, since it is the only one where `runtime/` changes ship.
-- This workspace has no GitHub credentials (`gh` is not logged in, no token), so it cannot dispatch
-  a run, read a run's logs or download an artifact. The workflow is written, YAML-parsed, every
-  shell block parsed with `bash -n`, and its build/verify/report steps were executed here against a
-  real APK built by `build.py android --so …` — but no Actions run is claimed, and none is.
+- **This repository must be private for the build job to run** (`isPrivate` is still `false`): the
+  APK contains code and shader data generated from Virtua Tennis 3, and artifacts plus logs of a
+  public repository are readable by anyone. The `guard` job therefore refuses to build here.
+  Making it private (Settings → General → Danger Zone → Change repository visibility → Private) is
+  what starts the pipeline; hosting the input library elsewhere does not change that, because the
+  APK is itself game-derived.
+- **The input repository must be readable by CI.** `typhon-op/vt3-build-inputs` holds
+  `libvt3android.so`, `shaders.pack`, `SHA256SUMS.txt` and `BUILD_INFO.txt`. The workflow checks it
+  out with the Actions secret `BUILD_INPUTS_TOKEN` (fine-grained, Contents: Read-only, that one
+  repository) and verifies it with `sha256sum -c` before building; without the secret the checkout
+  is skipped with a notice and the run stops at "Select the build inputs".
+- **The signing secret must exist.** `ANDROID_DEBUG_KEYSTORE_B64` (base64 of `debug.keystore`) under
+  Settings → Secrets and variables → Actions. The job stops with that instruction rather than
+  signing with a new key, which could not install as an update.
+- **No translated C source is preserved**, so the pipeline runs in `prebuilt` mode: the Java UI,
+  resources, manifest and installer are rebuilt every run and the native runtime plus the
+  translated game come from the pinned library. Changes under `runtime/` therefore do not ship
+  until `build.py inputs --exe` is run once on a machine that has the executable; that switches the
+  workflow to `translated` mode on its own.
+- This workspace has no GitHub credentials (`gh` is not logged in, no token), so it cannot push the
+  input repository, dispatch a run, read a run's logs or download an artifact. Everything that can
+  be checked without them was: the workflow YAML parses, every shell block passes `bash -n`, and
+  the input-selection, build, verification, report and upload-guard steps were executed here
+  against a real APK built from the pinned library by `build.py android --so …`.

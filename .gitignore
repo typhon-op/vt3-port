@@ -43,9 +43,5 @@ artifacts/
 *.apk
 *.aab
 
-# prebuilt/ holds preserved build inputs, not extracted game data. They belong in the
-# repository (and the workflow uses them) only while it is private; keep them from being
-# caught by the asset patterns above.
-!prebuilt/libvt3android.so
-!prebuilt/shaders.pack
-!prebuilt/SHA256SUMS.txt
+# The compiled game library and shader pack are not kept in this repository at all: they live in
+# the private inputs repository (docs/BUILD_INPUTS.md).
