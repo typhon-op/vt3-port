@@ -43,7 +43,7 @@ dependency download step and no version drift to chase; the pinned toolchain is 
 |---|---|---|
 | `build/game/vt3.c`, `build/game/image.bin` | `python build.py inputs --exe VT3.exe` | the whole ARM64 library; without it nothing compiles |
 | `build/shaders.pack` | same command (SM2 blobs from the exe + rebuilt D3D shaders, `glslangValidator`) | bundled as `assets/shaders.pack` |
-| `build/android/libvt3android.so` | `build.py android` (CMake + NDK clang) | the game library inside the APK |
+| `build/android/libvt3android.so` | `build.py android` (CMake + NDK clang) | the game library inside the APK; also the `--so` input that repackages without recompiling |
 | `build/android/VT3-Android.apk` | `build.py android` → `android/build_apk.py` | the deliverable |
 
 Rebuilding **without translating again** is what keeps small changes cheap:
@@ -62,19 +62,24 @@ Only a change to the *translator* (`tools/recomp/`) or to the shader *translatio
 
 ### Where those inputs are kept
 
-They are game-derived, so they live in **private** stores only, never in git:
+They are game-derived, so they live in **private** stores only, never in git — `docs/BUILD_INPUTS.md`
+is the full account. In short, the CI takes the first of these that exists:
 
-1. **GitHub Actions cache** — the workflow key `vt3-translated-<IMAGE_SHA256>` holds `build/game`
-   and `build/shaders.pack`. Private to the repository, restored by every hosted run. This is the
-   store the CI depends on; it is the reason a build needs no game file at all.
-2. **The private cloud workspace** (`artifacts/`, not committed, account-scoped) — the outputs this
-   session actually still holds: `build-inputs/libvt3android.so`, `build-inputs/shaders.pack`, the
-   signed APK, its checksums and `BUILD_INFO.txt`. `artifacts/build-inputs/SHA256SUMS.txt` records
-   their hashes. The translated C source is *not* there: it was deleted with the build tree as
-   instructed, and it can only be regenerated from `VT3.exe`.
+1. **GitHub Actions cache**, key `vt3-translated-<IMAGE_SHA256>`: `build/game` + `build/shaders.pack`.
+   Fast, but it is a cache: GitHub evicts it after 90 idle days.
+2. **Release asset** `vt3-translated-inputs.tar.gz` on the `build-inputs` tag, a release in this
+   private repository: the durable copy of the same two paths, refilled by a run with
+   `publish_inputs` ticked.
+3. **`prebuilt/`** in the repository: `libvt3android.so` + `shaders.pack`, hashes in
+   `prebuilt/SHA256SUMS.txt`. No translated C source, so it rebuilds everything Android around the
+   preserved library instead of recompiling the native runtime.
 
-To restore the cache after it expires (90 days unused, or evicted), or to create it the first time,
-run the workflow once in `translate-from-exe` mode on a machine that holds your executable.
+With none of them the run stops at "Select the build inputs" and says what to restore; it never
+builds from a partial or wrong input. The private cloud workspace of the session that produced the
+current APK (`artifacts/`, not committed) still holds `build-inputs/libvt3android.so`,
+`build-inputs/shaders.pack`, the signed APK and its `BUILD_INFO.txt`; that is where the two files for
+store 3 come from. The translated C source is not there: it was deleted with the build tree as
+instructed, and it can only be regenerated from `VT3.exe`.
 
 ## 3. The signing identity
 
@@ -93,22 +98,28 @@ run the workflow once in `translate-from-exe` mode on a machine that holds your 
 
 ## 4. Publishing the APK from GitHub Actions
 
-Workflow: `.github/workflows/android-debug.yml`, manual (`workflow_dispatch`), two modes.
+Workflow: `.github/workflows/android-debug.yml`, entirely on GitHub-hosted runners, three triggers:
 
-- `reuse-translated` (default) — `ubuntu-latest`: installs JDK 21, the Android command line tools,
-  `platforms;android-35`, `build-tools;36.1.0` and `ndk;30.0.16248370`; restores the translated
-  inputs from the cache; runs the native and Java diagnostics tests; compiles the ARM64 library and
-  packages and signs the APK; verifies alignment, signature and certificate, package name,
-  `arm64-v8a`, the exported native symbols and the diagnostics classes; writes `SHA256SUMS.txt` and
-  `BUILD_INFO.txt`; uploads the artifact.
-- `translate-from-exe` — `[self-hosted, linux, vt3]` on the machine holding your `VT3.exe`: locates
-  the file (never downloads it), translates it, builds the shader pack and saves both to the cache.
-  It does not build the APK; run `reuse-translated` afterwards.
+- **push to `vt3android`** builds that commit automatically (`paths-ignore` skips prose-only edits),
+- **workflow_dispatch** builds on demand, with `retention_days` and an optional `publish_inputs`,
+- **schedule**, Mondays 03:17 UTC, which keeps the pipeline and its pinned toolchain exercised.
+
+The `build` job installs JDK 21, the Android command line tools, `platforms;android-35`,
+`build-tools;36.1.0` and `ndk;30.0.16248370`; restores the inputs in the order listed in section 2
+and validates them (translated `image.bin` against the supported hash, `prebuilt/` against its own
+`SHA256SUMS.txt`, and the library inside the finished APK against that hash again); sets the
+`versionCode`; runs the native and Java diagnostics tests; builds, packages and signs; verifies
+alignment, signature and certificate, package name, `arm64-v8a`, the exported native symbols and the
+diagnostics classes; writes `SHA256SUMS.txt` and `BUILD_INFO.txt`; and uploads the artifact. A run
+that has the translated source can also publish it as the private release asset, which is how the
+durable copy is created without a game file ever reaching a runner.
 
 Artifact `VT3-Android-Debug` holds exactly `VT3-Android.apk`, `SHA256SUMS.txt`, `BUILD_INFO.txt`,
 retention `retention_days` (default **7**). A step fails the job if anything else — an executable,
-image, source or archive — would be uploaded. Both jobs refuse to run when the repository is public,
-because the APK contains shader data translated from the game.
+image, source or library — would be uploaded. The `guard` job refuses a public repository, because
+the APK contains code and shader data translated from the game and artifacts plus logs of a public
+repository are readable by anyone; for a manual run it fails with the setting to change, and for a
+push or a scheduled run it reports a warning instead of turning every push red.
 
 Download on the phone: **Actions → VT3 Android Debug → the run → Artifacts → VT3-Android-Debug**
 (a GitHub login is required; artifacts of a private repository are visible only to people who can
@@ -116,20 +127,32 @@ read it). The zip holds the APK and its two text files.
 
 ### Version codes and updates
 
-`android:versionCode` in `android/game/AndroidManifest.xml` is currently **2** (`versionName 0.2.0`).
-Android installs an update only when the package name matches, the signature matches and the
-`versionCode` is at least the installed one. Raise it for every published build; `BUILD_INFO.txt`
-records the code each artifact was built with.
+The workflow sets it for every build: `versionCode = 1000 + github.run_number`, so each published
+build is higher than the last without a bot commit, and CI builds sit above the hand-built 0.2.0
+(versionCode 2). Android installs an update only when the package name and the signing certificate
+match and the `versionCode` is at least the installed one; the workflow checks all three. The
+manifest itself still says **2** (`versionName 0.2.0`) for local builds; `BUILD_INFO.txt` records the
+code and the `+ci.<run>` version name each artifact was built with.
 
 ## 5. What is not verified here, and what blocks a CI-published APK right now
 
 - No device or emulator is available in the cloud workspace, so nothing here proves the game runs:
   launch, Vulkan, audio, touch controls, the diagnostics screen and saving/sharing the report are
   still owed on hardware.
-- This workspace has no GitHub credentials, so it cannot dispatch a run or read its artifacts: the
-  workflow has been written and validated as YAML and its shell blocks syntax-checked, but no run of
-  it is claimed.
-- GitHub-hosted runners cannot obtain `VT3.exe` without publishing it (committing it, a public URL,
-  or a secret — secrets cap at 48 KB and the executable is 5.5 MB). That is why the translation is
-  cached instead: one `translate-from-exe` run primes it and every later hosted run is a single
-  button press from the phone.
+- **The repository is public today** (`isPrivate: false`), and that is the one thing blocking the
+  whole pipeline: the APK and any committed translated output contain code and shader data
+  generated from Virtua Tennis 3, so publishing them from a public repository is exactly what the
+  project rules forbid. The `guard` job therefore refuses to build. Make it private
+  (Settings → General → Danger Zone → Change repository visibility → Private) and the same
+  workflow, unchanged, starts producing APKs.
+- **The signing secret does not exist yet.** Add `ANDROID_DEBUG_KEYSTORE_B64` (base64 of
+  `debug.keystore`) under Settings → Secrets and variables → Actions. The job stops with that
+  instruction rather than signing with a new key, which could not install as an update.
+- **`prebuilt/` is empty.** `prebuilt/README.md` explains what goes in it and how to produce the two
+  files from an existing APK; doing it in a private repository makes every push build an APK with
+  no other input. With the translated C source published instead, the workflow compiles the native
+  side too — that is the mode to aim for, since it is the only one where `runtime/` changes ship.
+- This workspace has no GitHub credentials (`gh` is not logged in, no token), so it cannot dispatch
+  a run, read a run's logs or download an artifact. The workflow is written, YAML-parsed, every
+  shell block parsed with `bash -n`, and its build/verify/report steps were executed here against a
+  real APK built by `build.py android --so …` — but no Actions run is claimed, and none is.

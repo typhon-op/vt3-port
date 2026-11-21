@@ -103,51 +103,59 @@ python build.py android --game build/game --shaders build/shaders.pack
 
 That skips the translator and the shader pack builder, so a UI, Java, resource, manifest or runtime
 change rebuilds in the time the C compile takes. Both outputs are game-derived: keep them private,
-never commit them. `docs/CI_AND_PRESERVATION.md` has the full handover — what is preserved where,
-the toolchain pins, the signing identity and the CI modes below.
+never commit them. If the translation itself is gone and only a library built earlier survives, the
+APK can still be repackaged around it, without a game file of any kind:
 
-### Building the APK in GitHub Actions
+```sh
+python build.py android --so prebuilt/libvt3android.so --shaders prebuilt/shaders.pack
+```
+
+That rebuilds the Android side (Java, resources, manifest, installer) and not the native runtime.
+`docs/CI_AND_PRESERVATION.md` has the full handover — what is preserved where, the toolchain pins,
+the signing identity and the CI modes below — and `docs/BUILD_INPUTS.md` covers the private stores
+the three kinds of input live in.
+
+### Continuous APK builds in GitHub Actions
 
 `.github/workflows/android-debug.yml` builds, tests, signs, verifies and publishes the debug APK as
-the artifact `VT3-Android-Debug`, downloadable on the phone from the run's summary page. It is
-manual: **Actions → VT3 Android Debug → Run workflow**. Nothing here is needed to play: the APK is
-distributed on its own and installing it requires no build and no runner.
+the artifact **`VT3-Android-Debug`** (`VT3-Android.apk`, `SHA256SUMS.txt`, `BUILD_INFO.txt`, kept 7
+days), downloadable on the phone from the run's page. It runs on GitHub-hosted runners only and is
+permanent:
 
-There are two modes.
+- **every push to `vt3android`** builds that commit automatically (prose-only commits are skipped),
+- **Actions → VT3 Android Debug → Run workflow** builds on demand,
+- **weekly on a schedule**, so the pipeline and its pinned toolchain do not rot between pushes.
 
-- **reuse-translated** (default) runs on a GitHub-hosted runner and needs no game file at all. It
-  restores the translation of `VT3.exe` — `build/game` and `build/shaders.pack` — from the Actions
-  cache, then compiles the ARM64 library, packages, signs and verifies the APK. UI, Java, resource,
-  manifest and runtime source changes all rebuild this way, from the phone alone.
-- **translate-from-exe** runs on a self-hosted runner that holds your own `VT3.exe`, translates it
-  once and saves the result to the cache, so every later *reuse-translated* run works without it.
+Nothing about it needs a computer, a self-hosted runner or the game executable. Two one-off
+prerequisites:
 
-In that mode the executable is never downloaded, committed, uploaded or printed: it is read from
-local disk and only its path, size and SHA-256 appear in the log. `actions/checkout` removes
-untracked files, so keep it outside the checkout (default `~/VT3.exe`) and set `exe_path`
-otherwise. A zip holding `VT3.exe` works too. That runner needs CMake 3.22+, Ninja,
-`glslangValidator`, Python with `pefile` and `capstone`, `ANDROID_HOME` with `build-tools;36.1.0`
-and `platforms;android-35`, and `ANDROID_NDK_HOME` with `ndk;30.0.16248370`; it is registered under
-Settings → Actions → Runners → New self-hosted runner with the labels `self-hosted`, `linux` and
-`vt3`, and the job names whatever tool is missing instead of installing packages on your machine.
-The hosted job installs its own (JDK 21, the SDK packages, the NDK, Ninja).
+1. **The repository must be private.** The APK contains code and shader data generated from the
+   game, and artifacts and logs of a public repository are readable by anyone: the workflow's first
+   job refuses to build there and says so in the log. `Settings → General → Danger Zone → Change
+   repository visibility → Private`.
+2. **The build inputs must be in one of the private stores.** The workflow takes the first that is
+   available: the Actions cache, then the `build-inputs` release asset, then `prebuilt/` in the
+   repository. If the translated C source is present (`build/game`) the ARM64 library, runtime and
+   game are compiled in the run; with only `prebuilt/libvt3android.so` it rebuilds everything else
+   (Java UI, resources, manifest, on-device installer) around that library. `BUILD_INFO.txt` states
+   which mode produced the APK, and `docs/BUILD_INPUTS.md` explains all three stores, cache-miss
+   handling and how to refresh them.
 
-Both jobs refuse to run when the repository is public: the APK contains shader data translated from
-the game, and artifacts are readable by everyone who can read the repository. The build job runs
-the native and Java diagnostics tests, verifies `build/game/image.bin` against `52be3cda…fc80bf`
-(so a wrong translation cannot get through), then checks `zipalign -c -p 4`, `apksigner verify` and
-the signer's certificate digest, `net.vt3port.game`, the `arm64-v8a` library, and the eight
-diagnostics classes with `VT3_Diagnostic_Report.txt` inside the shipped dex. The upload holds only
-`VT3-Android.apk`, `SHA256SUMS.txt` and `BUILD_INFO.txt` (retention `retention_days`, default 7
-days); a step fails the job if anything else would be uploaded.
+The run installs JDK 21, the SDK packages, `build-tools;36.1.0` and `ndk;30.0.16248370`; restores
+the inputs and validates them (the translated image against `52be3cda…fc80bf`, `prebuilt/` against
+its own `SHA256SUMS.txt`); runs the native and Java diagnostics tests; builds, packages and signs;
+and verifies `zipalign -c -p 4`, `apksigner verify` plus the signer's certificate digest,
+`net.vt3port.game`, the `arm64-v8a` ELF64 AArch64 library with its four entry symbols, and the eight
+diagnostics classes with `VT3_Diagnostic_Report.txt` in the shipped dex. The upload holds only the
+APK and its two text files; a step fails the job if anything else would be uploaded.
 
 The APK carries no game data: the installer still takes your own disc image or extracted folder on
-the phone. Signing uses the existing identity, so a new APK installs over the one already
+the phone. Signing always uses the preserved identity, so a new APK installs over the one already
 installed: the keystore comes from the repository secret `ANDROID_DEBUG_KEYSTORE_B64` (base64 of
 `debug.keystore`, alias `vt3port`, store and key password `android`), and without it the job stops
-rather than generating a new key. `BUILD_INFO.txt` records the `versionCode`; raise
-`android:versionCode` in `android/game/AndroidManifest.xml` (currently 2) for each published build,
-because Android only installs an update with an equal or higher code.
+rather than generating a new key that could not install as an update. The `versionCode` is set by
+the workflow to `1000 + run number`, so every build is higher than the last and Android accepts it
+as an update; local builds keep the manifest's own code (currently 2).
 
 It does not run the game: launching, Vulkan, audio, touch controls and saving the report still need
 a device.

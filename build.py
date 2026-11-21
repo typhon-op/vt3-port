@@ -6,6 +6,8 @@ Usage:
   python build.py android --exe VT3.exe            -> build/android/VT3-Android.apk   (macOS, Linux, Windows)
   python build.py android --game build/game --shaders build/shaders.pack
                                                    -> the same APK, from preserved outputs, no retranslation
+  python build.py android --so prebuilt/libvt3android.so --shaders prebuilt/shaders.pack
+                                                   -> the same APK around a library built earlier, no game file at all
   python build.py inputs  --exe VT3.exe            -> build/game (vt3.c, image.bin) + build/shaders.pack
   python build.py macos   --exe VT3.exe --iso DISC  -> build/macos/VT3.app            (macOS only)
 
@@ -105,37 +107,49 @@ def shader_pack(exe):
     return pack
 
 
-def android(exe, game=None, pack=None):
+def android(exe, game=None, pack=None, so=None):
+    """Package the APK. The library comes from the translated game (--exe, or --game) or, when the
+    translation is gone, from a library built earlier (--so): then only the Android side is rebuilt."""
     sys.path.insert(0, os.path.join(REPO, "android"))
     import build_apk
     # Every tool the build needs, checked before the long translate and compile steps.
-    need("cmake", "install CMake 3.22 or newer")
-    need("ninja", "install Ninja")
+    if so is None:
+        need("cmake", "install CMake 3.22 or newer")
+        need("ninja", "install Ninja")
+        need(os.environ.get("CC", "cc"), "install a host C compiler (or set CC); the shader pack tools are built with it")
     if pack is None:
         need("glslangValidator", "install the Vulkan SDK (or the glslang package)")
-    need(os.environ.get("CC", "cc"), "install a host C compiler (or set CC); the shader pack tools are built with it")
     need_path(build_apk.ndk_clang(), "install the NDK (sdkmanager \"ndk;30.0.16248370\") and set ANDROID_NDK_HOME")
     need_path(build_apk.tool(build_apk.SDK, "build-tools", "36.1.0", "aapt2"),
               "set ANDROID_HOME and install build-tools;36.1.0 with sdkmanager")
     need_path(os.path.join(build_apk.SDK, "platforms", "android-%d" % build_apk.TARGET_API, "android.jar"),
               "install platforms;android-%d with sdkmanager" % build_apk.TARGET_API)
     need_path(build_apk.tool(build_apk.JAVA_HOME, "bin", "javac"), "install JDK 17 or newer and set JAVA_HOME")
-    if game is None:
-        game = translate(exe)
+    if so is not None:
+        so = os.path.abspath(so)
+        need_path(so, "that prebuilt library is missing: build it once from the game with --exe")
+        if pack is None:
+            sys.exit("--so needs --shaders with the preserved shader pack")
+        print("Reusing the prebuilt game library %s." % so)
+        print("The runtime and the translated game are NOT recompiled in this mode; only the Android")
+        print("side (Java, resources, manifest, installer) is rebuilt around that library.")
     else:
-        game = os.path.abspath(game)
-        check_game(game)
-    if pack is None:
-        pack = shader_pack(os.path.join(game, "VT3.exe"))
-    cm = os.path.join(BUILD, "android", "cmake")
-    run(["cmake", "-S", os.path.join(REPO, "runtime"), "-B", cm, "-G", "Ninja",
-         "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(build_apk.NDK, "build", "cmake", "android.toolchain.cmake"),
-         "-DANDROID_PLATFORM=android-29", "-DANDROID_ABI=arm64-v8a", "-DCMAKE_BUILD_TYPE=Release",
-         "-DVT3_GAME_DIR=" + game, "-DPython3_EXECUTABLE=" + sys.executable])
-    print("Compiling the translated game. This takes 5 to 15 minutes.")
-    run(["cmake", "--build", cm, "--target", "vt3android"])
-    so = os.path.join(BUILD, "android", "libvt3android.so")
-    run([build_apk.ndk_tool("llvm-strip"), "-o", so, os.path.join(cm, "libvt3android.so")])
+        if game is None:
+            game = translate(exe)
+        else:
+            game = os.path.abspath(game)
+            check_game(game)
+        if pack is None:
+            pack = shader_pack(os.path.join(game, "VT3.exe"))
+        cm = os.path.join(BUILD, "android", "cmake")
+        run(["cmake", "-S", os.path.join(REPO, "runtime"), "-B", cm, "-G", "Ninja",
+             "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(build_apk.NDK, "build", "cmake", "android.toolchain.cmake"),
+             "-DANDROID_PLATFORM=android-29", "-DANDROID_ABI=arm64-v8a", "-DCMAKE_BUILD_TYPE=Release",
+             "-DVT3_GAME_DIR=" + game, "-DPython3_EXECUTABLE=" + sys.executable])
+        print("Compiling the translated game. This takes 5 to 15 minutes.")
+        run(["cmake", "--build", cm, "--target", "vt3android"])
+        so = os.path.join(BUILD, "android", "libvt3android.so")
+        run([build_apk.ndk_tool("llvm-strip"), "-o", so, os.path.join(cm, "libvt3android.so")])
     apk = build_apk.main(["build_apk.py", "game", "vt3android", "--so", so, "--asset", pack])
     out = os.path.join(BUILD, "android", "VT3-Android.apk")
     shutil.copy(apk, out)
@@ -194,6 +208,7 @@ def main(argv):
     exe = os.path.abspath(argv[argv.index("--exe") + 1]) if "--exe" in argv else None
     game = argv[argv.index("--game") + 1] if "--game" in argv else None
     pack = os.path.abspath(argv[argv.index("--shaders") + 1]) if "--shaders" in argv else None
+    so = os.path.abspath(argv[argv.index("--so") + 1]) if "--so" in argv else None
     iso = os.path.abspath(argv[argv.index("--iso") + 1]) if "--iso" in argv else None
     if argv[1] == "inputs":
         if not exe:
@@ -205,8 +220,12 @@ def main(argv):
             sys.exit("macos needs --exe")
         macos(exe, iso)
         return 0
+    if so is not None:
+        android(exe, None, pack, so)
+        return 0
     if exe is None and (game is None or pack is None):
-        sys.exit("android needs --exe, or --game and --shaders to build from preserved outputs")
+        sys.exit("android needs --exe, or --game and --shaders to build from preserved outputs, "
+                 "or --so and --shaders to repackage a library built earlier")
     android(exe, game, pack)
     return 0
 
