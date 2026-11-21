@@ -92,6 +92,46 @@ python build.py android --exe C:\path\to\VT3.exe
 
 The Linux and Windows steps have not been tested yet. Please report what breaks.
 
+### Building the APK in GitHub Actions
+
+`.github/workflows/android-debug.yml` builds, tests and verifies the same APK on a GitHub runner. It
+is manual: **Actions → VT3 Android Debug → Run workflow**.
+
+Two repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Holds |
+|---|---|
+| `VT3_EXE_B64` | Required. base64 of your `VT3.exe`, or of a zip that contains it. |
+| `DEBUG_KEYSTORE_B64` | Optional. base64 of an existing `debug.keystore`, to keep the signing identity. |
+
+The workflow refuses to run unless the repository is private: the APK carries shader data
+translated from the game, and artifacts are downloadable by everyone who can read the repository.
+The executable is decoded only into the runner's temp directory, is never committed, never fetched
+from a URL, and never printed — only its SHA-256, which is not a credential. The job also fails if
+`build/game/image.bin` is not `52be3cda…fc80bf`, i.e. if the file is not the English v1.0.1 build.
+
+```bash
+base64 -w0 VT3.exe                      # Linux: paste the output into VT3_EXE_B64
+base64 -i VT3.exe | tr -d '\n' | pbcopy # macOS
+```
+
+The job runs `build.py android`, the native and Java diagnostics tests, then checks
+`zipalign -c -p 4`, `apksigner verify`, the package name, the `arm64-v8a` library (with
+`JNI_OnLoad`, `vt3_diag_jni_write` and `vt3_logc`), and the eight diagnostics classes plus
+`VT3_Diagnostic_Report.txt` inside the shipped dex. It uploads one artifact, `VT3-Android-Debug`,
+holding `VT3-Android.apk`, `SHA256SUMS.txt` and `BUILD_INFO.txt`. Retention is the
+`retention_days` input (default 7 days); a run takes roughly 20-30 minutes, mostly compiling the
+~100 MB translated game.
+
+Keeping one signing identity: an APK signed with a new key cannot be installed over the previous
+one, and uninstalling deletes the unpacked game. To keep it, base64 your existing
+`build/android/debug.keystore` (alias `vt3port`, store and key password `android`) into
+`DEBUG_KEYSTORE_B64`. Without that secret the job generates a new key and says so; either way the
+signer's SHA-256 is written to `BUILD_INFO.txt` so two runs can be compared.
+
+The workflow does not run the game: launching, Vulkan, audio, touch controls and saving the report
+still need a device.
+
 ## Installing on Android
 
 1. Install `build/android/VT3-Android.apk` (for example with `adb install`).
