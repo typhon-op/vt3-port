@@ -1,16 +1,39 @@
 name: VT3 Android Debug
 
-# Builds the debug APK on a self-hosted runner: the machine that already holds your own VT3.exe.
-# The executable is read from local disk and is never downloaded, committed, uploaded or printed —
-# only its path, size and SHA-256 appear in the log. Nothing game-derived is published except the
-# APK, which holds the port's own code plus shader data translated from that file.
-#
+# Builds, tests, signs and verifies the debug APK and publishes it as the artifact
+# "VT3-Android-Debug" (VT3-Android.apk + SHA256SUMS.txt + BUILD_INFO.txt), 7 days by default.
 # Start it from Actions -> "VT3 Android Debug" -> Run workflow.
+#
+# Two modes:
+#
+#   reuse-translated   (default) Runs on a GitHub-hosted runner and needs no game file. It restores
+#                      the translation of VT3.exe (build/game + build/shaders.pack) from the Actions
+#                      cache and recompiles the ARM64 library, so UI, Java, resource, manifest and
+#                      runtime changes all rebuild from a phone alone. Run translate-from-exe once
+#                      to fill the cache.
+#   translate-from-exe Runs on a self-hosted runner that holds your own VT3.exe: it translates the
+#                      executable, writes the shader pack, and saves both to the cache for every
+#                      later reuse-translated run. The executable is read from local disk and is
+#                      never downloaded, committed, uploaded or printed - only its path, size and
+#                      SHA-256 appear in the log.
+#
+# Signing uses the existing identity, so a new APK installs over the one already on the phone: the
+# keystore comes from the repository secret ANDROID_DEBUG_KEYSTORE_B64 (base64 of debug.keystore,
+# alias vt3port, store and key password "android"). Without it the job stops rather than generating
+# a new key, which could not install over an existing APK.
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "reuse-translated: hosted, no game file. translate-from-exe: self-hosted, has VT3.exe."
+        required: false
+        default: "reuse-translated"
+        type: choice
+        options:
+          - reuse-translated
+          - translate-from-exe
       exe_path:
-        description: "Your VT3.exe: absolute path, or ~/path. Keep it outside the repository."
+        description: "translate-from-exe only: your VT3.exe (absolute or ~/path), outside the repository."
         required: false
         default: "~/VT3.exe"
         type: string
@@ -33,17 +56,19 @@ env:
   BUILD_TOOLS: "36.1.0"
   NDK_VERSION: "30.0.16248370"
   PACKAGE: net.vt3port.game
+  CERT_SHA256: 6150e1f4d5a195bccf53cc61c1a5384c4f6bc458c5f85dd3c40db18be44607d0
 
 jobs:
-  build:
-    name: Build, test and verify the debug APK
-    # Self-hosted only: a hosted runner has no access to the executable on your disk. Label the
-    # runner "vt3" (Settings -> Actions -> Runners -> New self-hosted runner) or drop that label.
+  # One-time (or after a translation change): turn your executable into the two inputs every later
+  # build needs. Cached, not uploaded, and never committed.
+  translated-inputs:
+    name: Translate VT3.exe into reusable build inputs
+    if: ${{ inputs.mode == 'translate-from-exe' }}
     runs-on: [self-hosted, linux, vt3]
     timeout-minutes: 120
     steps:
-      # The artifact is readable by everyone who can read the repository, so a public repository
-      # would publish game-derived files. Check before doing any work.
+      # Artifacts and caches are readable by everyone who can read the repository, so a public
+      # repository would expose game-derived files. Check before doing any work.
       - name: Refuse to build game-derived artifacts in a public repository
         if: ${{ github.event.repository.private != true }}
         run: |
@@ -55,8 +80,18 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Reuse an existing translation if the cache has one
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/game
+            build/shaders.pack
+          key: vt3-translated-${{ env.IMAGE_SHA256 }}
+
       # Checkout removes untracked files, which is why the executable belongs outside the workspace.
       - name: Locate your VT3.exe on this machine
+        if: steps.cache.outputs.cache-hit != 'true'
         env:
           VT3_EXE_INPUT: ${{ github.event.inputs.exe_path }}
         run: |
@@ -85,9 +120,8 @@ jobs:
           echo "VT3_EXE=$exe" >> "$GITHUB_ENV"
           echo "executable: ${exe} (${size} bytes, sha256 $(sha256sum "$exe" | cut -d' ' -f1))"
 
-      # Uses the toolchain the README already asks for rather than installing packages on your
-      # machine. Anything missing is named, with the command that fixes it.
       - name: Check the local toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -uo pipefail
           fail=0
@@ -95,9 +129,8 @@ jobs:
           need cmake "Install CMake 3.22 or newer"
           need ninja "Install Ninja"
           need glslangValidator "Install the Vulkan SDK, or the glslang package"
-          need javac "Install JDK 17 or newer and set JAVA_HOME"
-          need python3 "Install Python 3.10 or newer"
           need cc "Install a host C compiler"
+          need python3 "Install Python 3.10 or newer"
           python3 -c "import pefile, capstone" 2> /dev/null || {
             echo "::error title=Missing Python packages::python3 -m pip install pefile capstone"; fail=1; }
           : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-}}"
@@ -120,7 +153,107 @@ jobs:
           cmake --version | head -1
           ninja --version
           glslangValidator --version | head -1
-          javac -version
+
+      - name: Translate the executable and build the shader pack
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python3 -u build.py inputs --exe "$VT3_EXE"
+
+      - name: Save the translated inputs for every later build
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/game
+            build/shaders.pack
+          key: vt3-translated-${{ env.IMAGE_SHA256 }}
+
+  build:
+    name: Build, test, sign and verify the debug APK
+    needs: [translated-inputs]
+    if: ${{ always() && (needs.translated-inputs.result == 'success' || needs.translated-inputs.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Refuse to build game-derived artifacts in a public repository
+        if: ${{ github.event.repository.private != true }}
+        run: |
+          echo "::error title=Repository is public::This APK contains data translated from Virtua Tennis 3 and must not be published. Set the repository to private (Settings -> General -> Danger Zone -> Change repository visibility) and run the workflow again."
+          exit 1
+
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up the Android command line tools
+        uses: android-actions/setup-android@v3
+
+      # The NDK, the platform and build-tools come from the SDK; Ninja and CMake from the image.
+      # glslangValidator is not needed here: the shader pack is a restored input, not rebuilt.
+      - name: Install the toolchain (SDK packages, NDK, Ninja)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" "platforms;android-$ANDROID_API" \
+                     "build-tools;$BUILD_TOOLS" "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          test -x "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/aapt2"
+          test -f "$ANDROID_SDK_ROOT/platforms/android-$ANDROID_API/android.jar"
+          test -d "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
+          cmake --version | head -1
+          ninja --version
+
+      - name: Restore the translated inputs
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/game
+            build/shaders.pack
+          key: vt3-translated-${{ env.IMAGE_SHA256 }}
+
+      - name: Check the translated inputs are the supported ones
+        run: |
+          set -euo pipefail
+          for f in build/game/vt3.c build/game/image.bin build/shaders.pack; do
+            if [ ! -s "$f" ]; then
+              echo "::error title=No translated inputs::'$f' is missing, so there is nothing to compile. Run this workflow once with mode 'translate-from-exe' on a machine that holds your VT3.exe; it fills the cache these hosted runs restore from."
+              exit 1
+            fi
+          done
+          actual=$(sha256sum build/game/image.bin | cut -d' ' -f1)
+          echo "image.bin sha256: $actual"
+          if [ "$actual" != "$IMAGE_SHA256" ]; then
+            echo "::error title=Wrong translated image::The cached image is $actual, expected $IMAGE_SHA256. Delete the 'vt3-translated-$IMAGE_SHA256' cache and translate again from the English v1.0.1 executable."
+            exit 1
+          fi
+          echo "the preserved translation is the supported English v1.0.1 build"
+
+      # The same key, restored from the repository secret, keeps the signing certificate, so the new
+      # APK installs over the one already on the phone (normal update, no uninstall).
+      - name: Restore the signing identity
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::error title=Signing key missing::Add the repository secret ANDROID_DEBUG_KEYSTORE_B64: base64 of debug.keystore (alias vt3port, store and key password 'android', certificate SHA-256 $CERT_SHA256). Without it a new key would be generated and that APK could not install over an existing one."
+            exit 1
+          fi
+          mkdir -p build/android
+          printf '%s' "$KEYSTORE_B64" | base64 -d > build/android/debug.keystore
+          keytool -list -keystore build/android/debug.keystore -storepass android -alias vt3port > /dev/null
+          echo "keystore: alias vt3port restored"
 
       - name: Native diagnostics test
         run: |
@@ -141,24 +274,13 @@ jobs:
               tools/diagtest/DiagHostTest.java
           java -cp "$RUNNER_TEMP/diagjava" DiagHostTest | tee "$RUNNER_TEMP/java-test.txt"
 
-      # build.py translates the executable into build/game/vt3.c and image.bin, generates the shader
-      # pack, compiles the ARM64 library, and calls android/build_apk.py, which reuses
-      # build/android/debug.keystore when it exists, so an existing signing identity is kept.
+      # No --exe: the translated game and the shader pack come from the restored inputs, so the
+      # linker builds the ARM64 library and android/build_apk.py packages and signs it. The
+      # keystore restored above is reused by build_apk.py instead of generating a new one.
       - name: Build the ARM64 debug APK
         run: |
           set -euo pipefail
-          python3 -u build.py android --exe "$VT3_EXE"
-
-      - name: Verify the generated image against the expected hash
-        run: |
-          set -euo pipefail
-          actual=$(sha256sum build/game/image.bin | cut -d' ' -f1)
-          echo "image.bin sha256: $actual"
-          if [ "$actual" != "$IMAGE_SHA256" ]; then
-            echo "::error title=Wrong VT3.exe::The translated image is $actual, expected $IMAGE_SHA256. That file is not the English v1.0.1 build the port supports."
-            exit 1
-          fi
-          echo "the supplied executable is the supported English v1.0.1 build"
+          python3 -u build.py android --game build/game --shaders build/shaders.pack
 
       - name: Verify alignment, signature, package, architecture and diagnostics
         run: |
@@ -170,8 +292,13 @@ jobs:
           "$BT/zipalign" -c -p 4 "$APK"
           echo "zipalign: verified"
 
-          "$BT/apksigner" verify --print-certs "$APK"
-          echo "apksigner: verified"
+          "$BT/apksigner" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          signer=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt")
+          if [ "$signer" != "$CERT_SHA256" ]; then
+            echo "::error title=Wrong signing key::The APK is signed with $signer, expected $CERT_SHA256. A different key cannot install over the APK already on the phone."
+            exit 1
+          fi
+          echo "apksigner: verified, certificate $signer"
 
           "$BT/aapt2" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
           grep -q "package: name='${PACKAGE}'" "$RUNNER_TEMP/badging.txt"
@@ -179,21 +306,25 @@ jobs:
           echo "badging: ${PACKAGE}, arm64-v8a"
 
           unzip -p "$APK" lib/arm64-v8a/libvt3android.so > "$RUNNER_TEMP/libvt3android.so"
-          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          "$READELF" -h "$RUNNER_TEMP/libvt3android.so" | grep -q "Machine:.*AArch64"
-          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$BIN/llvm-readelf" -h "$RUNNER_TEMP/libvt3android.so" > "$RUNNER_TEMP/elf.txt"
+          grep -q "Machine:.*AArch64" "$RUNNER_TEMP/elf.txt"
+          # Dumped once: `grep -q` on a live pipe stops at the first match, the writer gets SIGPIPE
+          # and pipefail would fail the step on a symbol that is present.
+          "$BIN/llvm-nm" -D --defined-only "$RUNNER_TEMP/libvt3android.so" > "$RUNNER_TEMP/symbols.txt"
           for sym in ANativeActivity_onCreate JNI_OnLoad vt3_diag_jni_write vt3_logc; do
-            "$NM" -D --defined-only "$RUNNER_TEMP/libvt3android.so" | grep -q " $sym$" \
+            grep -q " $sym$" "$RUNNER_TEMP/symbols.txt" \
               || { echo "::error::the shipped library is missing $sym"; exit 1; }
           done
           echo "native library: ELF64 AArch64 with the game entry point and the diagnostics bridge"
 
           unzip -p "$APK" classes.dex > "$RUNNER_TEMP/classes.dex"
+          strings "$RUNNER_TEMP/classes.dex" > "$RUNNER_TEMP/dex-strings.txt"
           for cls in DiagCore DiagLog DiagReport DiagInfo DiagCrashHandler DiagFileProvider Diagnostics Vt3App; do
-            strings "$RUNNER_TEMP/classes.dex" | grep -q "Lnet/vt3port/game/${cls};" \
+            grep -q "Lnet/vt3port/game/${cls};" "$RUNNER_TEMP/dex-strings.txt" \
               || { echo "::error::the shipped dex is missing ${cls}"; exit 1; }
           done
-          strings "$RUNNER_TEMP/classes.dex" | grep -qx "VT3_Diagnostic_Report.txt"
+          grep -qx "VT3_Diagnostic_Report.txt" "$RUNNER_TEMP/dex-strings.txt"
           echo "dex: diagnostics classes and the TXT report name are present"
 
       - name: Write SHA256SUMS.txt and BUILD_INFO.txt
@@ -209,8 +340,7 @@ jobs:
           VERSION_CODE=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/badging.txt" | head -1)
           SIZE=$(stat -c %s "$APK")
           SHA=$(cut -d' ' -f1 artifact/SHA256SUMS.txt)
-          SIGNER=$("$BT/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          EXE_SHA=$(sha256sum "$VT3_EXE" | cut -d' ' -f1)
+          SIGNER=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt")
 
           {
             echo "VT3 Android debug build"
@@ -219,7 +349,9 @@ jobs:
             echo "Ref:               ${GITHUB_REF_NAME}"
             echo "Run:               ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Built (UTC):       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "Built on:          self-hosted runner, $(uname -sm)"
+            echo "Built on:          GitHub-hosted ubuntu-latest, $(uname -sm)"
+            echo "Build inputs:      translated outputs restored from the Actions cache"
+            echo "                   (key vt3-translated-${IMAGE_SHA256})"
             echo
             echo "APK version:       ${VERSION_NAME} (versionCode ${VERSION_CODE})"
             echo "Package:           ${PACKAGE}"
@@ -227,29 +359,32 @@ jobs:
             echo "APK file:          VT3-Android.apk"
             echo "APK size (bytes):  ${SIZE}"
             echo "APK SHA-256:       ${SHA}"
-            echo "Signer SHA-256:    ${SIGNER}"
+            echo "Signer SHA-256:    ${SIGNER} (CN=vt3 port)"
             echo
-            echo "Game executable"
-            echo "---------------"
-            echo "Supplied locally:  ${VT3_EXE}"
-            echo "Executable SHA256: ${EXE_SHA}"
-            echo "Image SHA-256:     ${IMAGE_SHA256} (verified against build/game/image.bin)"
-            echo "The executable is not included in this artifact and was not uploaded anywhere."
+            echo "Updating"
+            echo "--------"
+            echo "Signed with the same certificate as earlier builds, so it installs over one already on"
+            echo "the phone. Android also requires a versionCode at least as high as the installed one:"
+            echo "raise android:versionCode in android/game/AndroidManifest.xml for each release"
+            echo "(this build is ${VERSION_CODE})."
             echo
             echo "Game data"
             echo "---------"
-            echo "This APK carries no game data. The on-device installer is unchanged: it takes the"
-            echo "player's own disc image or extracted folder, verifies it and unpacks it on the phone."
+            echo "This APK carries no game data and no executable. The on-device installer is unchanged:"
+            echo "it takes the player's own disc image or extracted folder, verifies it and unpacks it on"
+            echo "the phone."
             echo
             echo "Tests"
             echo "-----"
-            echo "Native diag_log_test: PASS"
-            echo "Java DiagHostTest:    PASS"
-            echo "zipalign -c -p 4:     PASS"
-            echo "apksigner verify:     PASS"
-            echo "package name:         PASS"
-            echo "arm64-v8a library:    PASS (ANativeActivity_onCreate, JNI_OnLoad, vt3_diag_jni_write, vt3_logc)"
-            echo "diagnostics in dex:   PASS (8 classes, VT3_Diagnostic_Report.txt)"
+            echo "Native diag_log_test:        PASS"
+            echo "Java DiagHostTest:           PASS"
+            echo "image.bin vs supported:      PASS (${IMAGE_SHA256})"
+            echo "zipalign -c -p 4:            PASS"
+            echo "apksigner verify:            PASS (signer ${CERT_SHA256})"
+            echo "package name:                PASS (${PACKAGE})"
+            echo "architecture:                PASS (arm64-v8a, ELF64 AArch64)"
+            echo "native symbols:              PASS (ANativeActivity_onCreate, JNI_OnLoad, vt3_diag_jni_write, vt3_logc)"
+            echo "diagnostics in dex:          PASS (8 classes + VT3_Diagnostic_Report.txt)"
             echo
             echo "Native test output"
             echo "------------------"
@@ -275,8 +410,8 @@ jobs:
             echo "::error title=Unexpected artifact file::The artifact would carry $(echo "$found" | tr '\n' ' '). Only the APK and its two text files may be published."
             exit 1
           fi
-          if find artifact \( -iname '*.exe' -o -iname '*.iso' -o -iname '*.bin' -o -iname '*.zip' \) | grep -q .; then
-            echo "::error title=Game file in artifact::Refusing to upload an executable, image or archive."
+          if find artifact \( -iname '*.exe' -o -iname '*.iso' -o -iname '*.bin' -o -iname '*.zip' -o -iname '*.c' \) | grep -q .; then
+            echo "::error title=Game file in artifact::Refusing to upload an executable, image, source or archive."
             exit 1
           fi
           ls -l artifact
@@ -292,10 +427,11 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ fromJSON(github.event.inputs.retention_days || '7') }}
 
-      # Leftovers only. The supplied executable is never touched: it is your file, outside the
-      # repository, and the next build needs it.
+      # Build leftovers, including the restored keystore, which comes from the secret again next run.
+      # The translated inputs stay in the cache; a self-hosted executable outside the checkout is
+      # never touched.
       - name: Remove the build output
         if: always()
         run: |
           rm -rf build artifact
-          echo "removed the translated build output; the supplied executable was left untouched"
+          echo "removed the build output; the cache and any supplied executable were left untouched"

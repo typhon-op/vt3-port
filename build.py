@@ -4,6 +4,9 @@ the translated code, the guest image and the shader pack are all generated here,
 
 Usage:
   python build.py android --exe VT3.exe            -> build/android/VT3-Android.apk   (macOS, Linux, Windows)
+  python build.py android --game build/game --shaders build/shaders.pack
+                                                   -> the same APK, from preserved outputs, no retranslation
+  python build.py inputs  --exe VT3.exe            -> build/game (vt3.c, image.bin) + build/shaders.pack
   python build.py macos   --exe VT3.exe --iso DISC  -> build/macos/VT3.app            (macOS only)
 
 VT3.exe is the English v1.0.1 executable without disc protection (a zip holding it also works).
@@ -55,16 +58,28 @@ def get_exe(path, out):
 
 def translate(exe):
     """VT3.exe -> build/game/vt3.c + image.bin, checked against the image the port was made from."""
+    try:
+        import pefile, capstone  # noqa: F401  (recomp.py needs both)
+    except ImportError:
+        sys.exit("missing Python packages: pip install pefile capstone")
     game = os.path.join(BUILD, "game")
     os.makedirs(game, exist_ok=True)
     src = get_exe(exe, os.path.join(game, "VT3.exe"))
     rc = os.path.join(REPO, "tools", "recomp")
     run([sys.executable, os.path.join(rc, "recomp.py"), src, "--out", game, "--name", "vt3",
          "--seeds", os.path.join(rc, "vt3_seeds.txt"), "--table-sizes", os.path.join(rc, "vt3_table_sizes.txt")])
+    check_game(game)
+    return game
+
+
+def check_game(game):
+    """A translated folder holds vt3.c and the one image.bin this port was made from."""
+    for name in ("vt3.c", "image.bin"):
+        if not os.path.exists(os.path.join(game, name)):
+            sys.exit("no %s in %s: pass --game with a translated build/game, or --exe to translate" % (name, game))
     with open(os.path.join(game, "image.bin"), "rb") as f:
         if hashlib.sha256(f.read()).hexdigest() != IMAGE_SHA256:
-            sys.exit("This VT3.exe is not the English v1.0.1 build the port supports.")
-    return game
+            sys.exit("This translated image is not the English v1.0.1 build the port supports.")
 
 
 def shader_pack(exe):
@@ -90,13 +105,14 @@ def shader_pack(exe):
     return pack
 
 
-def android(exe):
+def android(exe, game=None, pack=None):
     sys.path.insert(0, os.path.join(REPO, "android"))
     import build_apk
     # Every tool the build needs, checked before the long translate and compile steps.
     need("cmake", "install CMake 3.22 or newer")
     need("ninja", "install Ninja")
-    need("glslangValidator", "install the Vulkan SDK (or the glslang package)")
+    if pack is None:
+        need("glslangValidator", "install the Vulkan SDK (or the glslang package)")
     need(os.environ.get("CC", "cc"), "install a host C compiler (or set CC); the shader pack tools are built with it")
     need_path(build_apk.ndk_clang(), "install the NDK (sdkmanager \"ndk;30.0.16248370\") and set ANDROID_NDK_HOME")
     need_path(build_apk.tool(build_apk.SDK, "build-tools", "36.1.0", "aapt2"),
@@ -104,8 +120,13 @@ def android(exe):
     need_path(os.path.join(build_apk.SDK, "platforms", "android-%d" % build_apk.TARGET_API, "android.jar"),
               "install platforms;android-%d with sdkmanager" % build_apk.TARGET_API)
     need_path(build_apk.tool(build_apk.JAVA_HOME, "bin", "javac"), "install JDK 17 or newer and set JAVA_HOME")
-    game = translate(exe)
-    pack = shader_pack(os.path.join(game, "VT3.exe"))
+    if game is None:
+        game = translate(exe)
+    else:
+        game = os.path.abspath(game)
+        check_game(game)
+    if pack is None:
+        pack = shader_pack(os.path.join(game, "VT3.exe"))
     cm = os.path.join(BUILD, "android", "cmake")
     run(["cmake", "-S", os.path.join(REPO, "runtime"), "-B", cm, "-G", "Ninja",
          "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(build_apk.NDK, "build", "cmake", "android.toolchain.cmake"),
@@ -119,6 +140,18 @@ def android(exe):
     out = os.path.join(BUILD, "android", "VT3-Android.apk")
     shutil.copy(apk, out)
     print("\nDone:", out)
+
+
+def inputs(exe):
+    """Translate and pack once, so later builds can reuse them: the inputs a rebuild needs."""
+    game = translate(exe)
+    pack = shader_pack(os.path.join(game, "VT3.exe"))
+    print("\nTranslated inputs, keep them for later builds (they are game-derived: never commit them):")
+    print("  --game", game)
+    print("  --shaders", pack)
+    print("\nNext build, without translating again:")
+    print("  python build.py android --game %s --shaders %s" % (game, pack))
+    return game, pack
 
 
 def macos(exe, iso):
@@ -155,16 +188,26 @@ def macos(exe, iso):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("android", "macos") or "--exe" not in argv:
+    if len(argv) < 2 or argv[1] not in ("android", "inputs", "macos"):
         print(__doc__)
         return 2
-    exe = os.path.abspath(argv[argv.index("--exe") + 1])
+    exe = os.path.abspath(argv[argv.index("--exe") + 1]) if "--exe" in argv else None
+    game = argv[argv.index("--game") + 1] if "--game" in argv else None
+    pack = os.path.abspath(argv[argv.index("--shaders") + 1]) if "--shaders" in argv else None
     iso = os.path.abspath(argv[argv.index("--iso") + 1]) if "--iso" in argv else None
-    try:
-        import pefile, capstone  # noqa: F401  (recomp.py needs both)
-    except ImportError:
-        sys.exit("missing Python packages: pip install pefile capstone")
-    (android(exe) if argv[1] == "android" else macos(exe, iso))
+    if argv[1] == "inputs":
+        if not exe:
+            sys.exit("inputs needs --exe: it translates VT3.exe and writes the shader pack")
+        inputs(exe)
+        return 0
+    if argv[1] == "macos":
+        if not exe:
+            sys.exit("macos needs --exe")
+        macos(exe, iso)
+        return 0
+    if exe is None and (game is None or pack is None):
+        sys.exit("android needs --exe, or --game and --shaders to build from preserved outputs")
+    android(exe, game, pack)
     return 0
 
 
