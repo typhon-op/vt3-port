@@ -96,7 +96,9 @@ The Linux and Windows steps have not been tested yet. Please report what breaks.
 
 `.github/workflows/android-debug.yml` runs the same build on a **self-hosted** GitHub runner — the
 machine that already holds your `VT3.exe`. It is manual: **Actions → VT3 Android Debug → Run
-workflow**.
+workflow**. Nothing here is needed to play: the APK is distributed on its own and installing it
+requires no build and no runner. The workflow is for people who want to rebuild it themselves on a
+Linux machine, and the cloud build that produced the released APK does not use it.
 
 The executable is never downloaded, committed or uploaded: the workflow reads it from local disk,
 prints only its path, size and SHA-256, and uses it for the translation and the ARM64 build. No
