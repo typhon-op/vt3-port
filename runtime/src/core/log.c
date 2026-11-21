@@ -8,6 +8,12 @@
  * it writes to stderr. If the ring is full the newest entry is dropped and counted: logging can
  * lose detail under pressure, but it can never stall a frame or a callback.
  */
+/* clock_gettime and nanosleep are POSIX, not ISO C: a strict -std=c11 host build (the shader-pack
+ * tool compiles this file) hides them behind a feature-test macro. Android's headers expose them
+ * unconditionally, so this changes nothing on the device. */
+#if !defined(__ANDROID__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "vt3/vt3_log.h"
 
 #include <pthread.h>
