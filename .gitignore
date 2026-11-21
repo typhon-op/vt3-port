@@ -37,3 +37,15 @@ __pycache__/
 
 # Agent worktrees (Claude Code)
 .claude/worktrees/
+
+# Build output, downloads and signing material are never committed.
+artifacts/
+*.apk
+*.aab
+
+# prebuilt/ holds preserved build inputs, not extracted game data. They belong in the
+# repository (and the workflow uses them) only while it is private; keep them from being
+# caught by the asset patterns above.
+!prebuilt/libvt3android.so
+!prebuilt/shaders.pack
+!prebuilt/SHA256SUMS.txt
