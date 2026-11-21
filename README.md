@@ -94,48 +94,39 @@ The Linux and Windows steps have not been tested yet. Please report what breaks.
 
 ### Building the APK in GitHub Actions
 
-`.github/workflows/android-debug.yml` builds, tests and verifies the same APK on a GitHub runner. It
-is manual: **Actions → VT3 Android Debug → Run workflow**.
+`.github/workflows/android-debug.yml` runs the same build on a **self-hosted** GitHub runner — the
+machine that already holds your `VT3.exe`. It is manual: **Actions → VT3 Android Debug → Run
+workflow**.
 
-Repository secrets (Settings → Secrets and variables → Actions):
+The executable is never downloaded, committed or uploaded: the workflow reads it from local disk,
+prints only its path, size and SHA-256, and uses it for the translation and the ARM64 build. No
+secret is involved. `actions/checkout` removes untracked files, so keep the file outside the
+checkout (default `~/VT3.exe`) and set the `exe_path` input if it lives elsewhere. A zip holding
+`VT3.exe` works too.
 
-| Secret | Holds |
-|---|---|
-| `VT3_EXE_URL` | Required, unless `VT3_EXE_B64` is set. A download link you control — for a Dropbox share link, replace `dl=0` with `dl=1`. |
-| `VT3_EXE_TOKEN` | Optional. Sent as `Authorization: Bearer …` when the host needs one. |
-| `VT3_EXE_B64` | Base64 of the executable or of a zip holding it. Only for inputs under GitHub's 48 KB secret limit; `VT3.exe` is 5.5 MB, so the URL is the normal path. |
-| `DEBUG_KEYSTORE_B64` | Optional. Base64 of an existing `debug.keystore`, to keep the signing identity. |
+The runner needs the same toolchain as the local build above: CMake 3.22+, Ninja,
+`glslangValidator`, JDK 17+, Python with `pefile` and `capstone`, `ANDROID_HOME` with
+`build-tools;36.1.0` and `platforms;android-35`, and `ANDROID_NDK_HOME` with
+`ndk;30.0.16248370`. Register it under Settings → Actions → Runners → New self-hosted runner with
+the labels `self-hosted`, `linux` and `vt3`. The job checks all of that first and names whatever is
+missing instead of installing packages on your machine.
 
-The workflow refuses to run unless the repository is private: the APK carries shader data
+It runs the native and Java diagnostics tests, builds the APK, verifies `build/game/image.bin`
+against `52be3cda…fc80bf` (so a wrong executable cannot get through), then checks `zipalign -c -p
+4`, `apksigner verify`, `net.vt3port.game`, the `arm64-v8a` library and the eight diagnostics
+classes plus `VT3_Diagnostic_Report.txt` inside the shipped dex. It uploads one artifact,
+`VT3-Android-Debug`, holding only `VT3-Android.apk`, `SHA256SUMS.txt` and `BUILD_INFO.txt`
+(retention from the `retention_days` input, default 7 days); a step fails the job if anything else —
+an executable, image or archive — would be uploaded.
+
+The APK carries no game data: the installer still takes your own disc image or extracted folder on
+the phone. `build/android/debug.keystore` is reused when it exists, so the signing identity stays
+the same and a new APK installs over the old one.
+
+The workflow refuses to run unless the repository is private: the APK contains shader data
 translated from the game, and artifacts are downloadable by everyone who can read the repository.
-The executable is written only to the runner's temp directory, is never committed and never
-printed — the log shows its size and SHA-256, which is not a credential. curl's stderr is sent to a
-file rather than the log, so a link carrying a token cannot leak; revoke or rotate the link
-whenever you like. The job fails if `build/game/image.bin` is not `52be3cda…fc80bf`, i.e. if the
-file is not the English v1.0.1 build, so a wrong or replaced executable cannot get through.
-
-```bash
-# only for the 48 KB path (a small zip):
-base64 -w0 VT3.exe                      # Linux, then paste into VT3_EXE_B64
-base64 -i VT3.exe | tr -d '\n' | pbcopy # macOS
-```
-
-The job runs `build.py android`, the native and Java diagnostics tests, then checks
-`zipalign -c -p 4`, `apksigner verify`, the package name, the `arm64-v8a` library (with
-`JNI_OnLoad`, `vt3_diag_jni_write` and `vt3_logc`), and the eight diagnostics classes plus
-`VT3_Diagnostic_Report.txt` inside the shipped dex. It uploads one artifact, `VT3-Android-Debug`,
-holding `VT3-Android.apk`, `SHA256SUMS.txt` and `BUILD_INFO.txt`. Retention is the
-`retention_days` input (default 7 days); a run takes roughly 20-30 minutes, mostly compiling the
-~100 MB translated game.
-
-Keeping one signing identity: an APK signed with a new key cannot be installed over the previous
-one, and uninstalling deletes the unpacked game. To keep it, base64 your existing
-`build/android/debug.keystore` (alias `vt3port`, store and key password `android`) into
-`DEBUG_KEYSTORE_B64`. Without that secret the job generates a new key and says so; either way the
-signer's SHA-256 is written to `BUILD_INFO.txt` so two runs can be compared.
-
-The workflow does not run the game: launching, Vulkan, audio, touch controls and saving the report
-still need a device.
+It does not run the game: launching, Vulkan, audio, touch controls and saving the report still need
+a device.
 
 ## Installing on Android
 

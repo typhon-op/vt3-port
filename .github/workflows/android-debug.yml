@@ -1,18 +1,25 @@
 name: VT3 Android Debug
 
-# Manual only: a build needs the player's own VT3.exe (supplied as a repository secret), so there is
-# nothing to run on every push. Start it from Actions -> "VT3 Android Debug" -> Run workflow.
+# Builds the debug APK on a self-hosted runner: the machine that already holds your own VT3.exe.
+# The executable is read from local disk and is never downloaded, committed, uploaded or printed —
+# only its path, size and SHA-256 appear in the log. Nothing game-derived is published except the
+# APK, which holds the port's own code plus shader data translated from that file.
+#
+# Start it from Actions -> "VT3 Android Debug" -> Run workflow.
 on:
   workflow_dispatch:
     inputs:
+      exe_path:
+        description: "Your VT3.exe: absolute path, or ~/path. Keep it outside the repository."
+        required: false
+        default: "~/VT3.exe"
+        type: string
       retention_days:
         description: "Days to keep the APK artifact (1-90)"
         required: false
         default: "7"
         type: string
 
-# The APK embeds shader data translated from the game executable, so the artifacts are game-derived.
-# Reading the workflow is enough to start it; nothing else in the repository is modified.
 permissions:
   contents: read
 
@@ -30,11 +37,13 @@ env:
 jobs:
   build:
     name: Build, test and verify the debug APK
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Self-hosted only: a hosted runner has no access to the executable on your disk. Label the
+    # runner "vt3" (Settings -> Actions -> Runners -> New self-hosted runner) or drop that label.
+    runs-on: [self-hosted, linux, vt3]
+    timeout-minutes: 120
     steps:
-      # The artifact is downloadable by every user who can read the repository, so a public
-      # repository would publish game-derived files. Check before doing any work.
+      # The artifact is readable by everyone who can read the repository, so a public repository
+      # would publish game-derived files. Check before doing any work.
       - name: Refuse to build game-derived artifacts in a public repository
         if: ${{ github.event.repository.private != true }}
         run: |
@@ -46,99 +55,72 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Set up the Android command line tools
-        uses: android-actions/setup-android@v3
-
-      - name: Install CMake, Ninja, glslang and the Python dependencies
+      # Checkout removes untracked files, which is why the executable belongs outside the workspace.
+      - name: Locate your VT3.exe on this machine
+        env:
+          VT3_EXE_INPUT: ${{ github.event.inputs.exe_path }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build glslang-tools python3-venv
-          # A venv keeps pip off Ubuntu's externally-managed system Python.
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet --disable-pip-version-check pefile capstone
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          src="${VT3_EXE_INPUT:-~/VT3.exe}"
+          case "$src" in
+            "~/"*) src="$HOME/${src#\~/}" ;;
+          esac
+          case "$src" in
+            /*) exe="$src" ;;
+            *) exe="$GITHUB_WORKSPACE/$src" ;;
+          esac
+          if [ ! -f "$exe" ]; then
+            echo "::error title=VT3.exe not found::Nothing on this runner at '${exe}'. Put your own English v1.0.1 VT3.exe there (a zip that contains it also works), keep it outside the repository checkout, or set the exe_path input. The workflow never downloads an executable."
+            exit 1
+          fi
+          case "$exe" in
+            "$GITHUB_WORKSPACE"/*)
+              echo "::warning::The executable is inside the repository checkout. actions/checkout cleans untracked files, so a later run may delete it. Keep it at e.g. ~/VT3.exe." ;;
+          esac
+          size=$(stat -c %s "$exe")
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error title=That is not VT3.exe::'${exe}' is ${size} bytes; the real executable is 5,538,816 bytes (a zip of it about 1,775,464)."
+            exit 1
+          fi
+          echo "VT3_EXE=$exe" >> "$GITHUB_ENV"
+          echo "executable: ${exe} (${size} bytes, sha256 $(sha256sum "$exe" | cut -d' ' -f1))"
+
+      # Uses the toolchain the README already asks for rather than installing packages on your
+      # machine. Anything missing is named, with the command that fixes it.
+      - name: Check the local toolchain
+        run: |
+          set -uo pipefail
+          fail=0
+          need() { command -v "$1" > /dev/null 2>&1 || { echo "::error title=Missing $1::$2"; fail=1; }; }
+          need cmake "Install CMake 3.22 or newer"
+          need ninja "Install Ninja"
+          need glslangValidator "Install the Vulkan SDK, or the glslang package"
+          need javac "Install JDK 17 or newer and set JAVA_HOME"
+          need python3 "Install Python 3.10 or newer"
+          need cc "Install a host C compiler"
+          python3 -c "import pefile, capstone" 2> /dev/null || {
+            echo "::error title=Missing Python packages::python3 -m pip install pefile capstone"; fail=1; }
+          : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$ANDROID_HOME" ] || [ ! -d "$ANDROID_HOME" ]; then
+            echo "::error title=ANDROID_HOME is not set::Point it at your Android SDK, e.g. \$HOME/Android/Sdk"; fail=1
+          else
+            echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+            [ -x "$ANDROID_HOME/build-tools/$BUILD_TOOLS/aapt2" ] || {
+              echo "::error title=Missing build-tools::$ANDROID_HOME/build-tools/$BUILD_TOOLS not found. sdkmanager \"build-tools;$BUILD_TOOLS\""; fail=1; }
+            [ -f "$ANDROID_HOME/platforms/android-$ANDROID_API/android.jar" ] || {
+              echo "::error title=Missing platform::sdkmanager \"platforms;android-$ANDROID_API\""; fail=1; }
+          fi
+          : "${ANDROID_NDK_HOME:=${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/$NDK_VERSION}}"
+          if [ ! -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang" ]; then
+            echo "::error title=Missing NDK::Expected $ANDROID_NDK_HOME. sdkmanager \"ndk;$NDK_VERSION\" and set ANDROID_NDK_HOME"; fail=1
+          else
+            echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          fi
+          [ "$fail" -eq 0 ] || exit 1
           cmake --version | head -1
           ninja --version
           glslangValidator --version | head -1
-          "$RUNNER_TEMP/venv/bin/python" -c "import pefile, capstone; print('pefile', pefile.__version__, 'capstone', capstone.__version__)"
-
-      - name: Install the SDK platform, build tools and NDK
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-${ANDROID_API}" \
-                     "build-tools;${BUILD_TOOLS}" "ndk;${NDK_VERSION}"
-          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          test -x "${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS}/aapt2"
-          test -x "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang"
-
-      # The executable is never committed. It comes from a repository secret: a URL you control
-      # (VT3_EXE_URL, optionally with a bearer token in VT3_EXE_TOKEN), or base64 in VT3_EXE_B64
-      # for a file small enough to fit GitHub's 48 KB secret limit. Nothing about the source is
-      # printed; curl's stderr goes to a file so a URL carrying a token cannot reach the log.
-      - name: Fetch VT3.exe from the repository secrets
-        env:
-          VT3_EXE_URL: ${{ secrets.VT3_EXE_URL }}
-          VT3_EXE_TOKEN: ${{ secrets.VT3_EXE_TOKEN }}
-          VT3_EXE_B64: ${{ secrets.VT3_EXE_B64 }}
-        run: |
-          set -euo pipefail
-          umask 077
-          out="$RUNNER_TEMP/VT3.exe"
-          if [ -n "${VT3_EXE_B64:-}" ]; then
-            printf '%s' "$VT3_EXE_B64" | base64 -d > "$out" || {
-              echo "::error title=VT3_EXE_B64 is not valid base64::Regenerate it without line breaks (Linux: base64 -w0, macOS: base64 | tr -d '\\n')."
-              exit 1
-            }
-            echo "source: VT3_EXE_B64 secret"
-          elif [ -n "${VT3_EXE_URL:-}" ]; then
-            hdr=()
-            if [ -n "${VT3_EXE_TOKEN:-}" ]; then hdr=(-H "Authorization: Bearer ${VT3_EXE_TOKEN}"); fi
-            if ! curl --fail --silent --show-error --location --retry 3 --retry-delay 5 \
-                      --max-time 600 "${hdr[@]}" -o "$out" "$VT3_EXE_URL" \
-                      2> "$RUNNER_TEMP/curl.err"; then
-              rm -f "$RUNNER_TEMP/curl.err"
-              echo "::error title=VT3.exe download failed::curl could not fetch the VT3_EXE_URL secret. Check that the link is still shared (a Dropbox link needs dl=1 at the end), that it has not expired, and that the runner can reach the host."
-              exit 1
-            fi
-            rm -f "$RUNNER_TEMP/curl.err"
-            echo "source: VT3_EXE_URL secret"
-          else
-            echo "::error title=No game executable secret::Set the repository secret VT3_EXE_URL to a download link you control (Dropbox: replace dl=0 with dl=1), or VT3_EXE_B64 for a file under 48 KB. Settings -> Secrets and variables -> Actions -> New repository secret."
-            exit 1
-          fi
-          size=$(stat -c %s "$out")
-          if [ "$size" -lt 1000000 ]; then
-            echo "::error title=The executable is missing or truncated::The staged file is ${size} bytes, far too small for VT3.exe (5,538,816 bytes) or its zip. Check the secret's link or base64 payload."
-            exit 1
-          fi
-          echo "VT3_EXE=$out" >> "$GITHUB_ENV"
-          echo "staged input: ${size} bytes, sha256 $(sha256sum "$out" | cut -d' ' -f1)"
-
-      # Optional: reuse the existing debug signing identity so a new APK installs over an old one.
-      # The keystore must use storepass/keypass "android" and alias "vt3port", as build_apk.py expects.
-      - name: Restore the debug signing key
-        env:
-          KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
-        run: |
-          set -euo pipefail
-          if [ -z "${KEYSTORE_B64:-}" ]; then
-            echo "No DEBUG_KEYSTORE_B64 secret: build_apk.py will generate a fresh signing key." >> "$GITHUB_STEP_SUMMARY"
-            echo "An APK signed with a new key cannot be installed over the old one without uninstalling,\nwhich deletes the unpacked game data. See README for how to keep the identity." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          mkdir -p build/android
-          umask 077
-          printf '%s' "$KEYSTORE_B64" | base64 -d > build/android/debug.keystore
-          echo "restored the debug signing key from DEBUG_KEYSTORE_B64"
+          javac -version
 
       - name: Native diagnostics test
         run: |
@@ -159,8 +141,9 @@ jobs:
               tools/diagtest/DiagHostTest.java
           java -cp "$RUNNER_TEMP/diagjava" DiagHostTest | tee "$RUNNER_TEMP/java-test.txt"
 
-      # build.py translates VT3.exe, generates the shader pack, compiles the ARM64 library and then
-      # calls android/build_apk.py, which writes build/android/VT3-Android.apk.
+      # build.py translates the executable into build/game/vt3.c and image.bin, generates the shader
+      # pack, compiles the ARM64 library, and calls android/build_apk.py, which reuses
+      # build/android/debug.keystore when it exists, so an existing signing identity is kept.
       - name: Build the ARM64 debug APK
         run: |
           set -euo pipefail
@@ -172,10 +155,10 @@ jobs:
           actual=$(sha256sum build/game/image.bin | cut -d' ' -f1)
           echo "image.bin sha256: $actual"
           if [ "$actual" != "$IMAGE_SHA256" ]; then
-            echo "::error title=Wrong VT3.exe::The translated image is $actual, expected $IMAGE_SHA256. This is not the English v1.0.1 build the port supports."
+            echo "::error title=Wrong VT3.exe::The translated image is $actual, expected $IMAGE_SHA256. That file is not the English v1.0.1 build the port supports."
             exit 1
           fi
-          echo "the executable is the supported English v1.0.1 build"
+          echo "the supplied executable is the supported English v1.0.1 build"
 
       - name: Verify alignment, signature, package, architecture and diagnostics
         run: |
@@ -227,6 +210,7 @@ jobs:
           SIZE=$(stat -c %s "$APK")
           SHA=$(cut -d' ' -f1 artifact/SHA256SUMS.txt)
           SIGNER=$("$BT/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          EXE_SHA=$(sha256sum "$VT3_EXE" | cut -d' ' -f1)
 
           {
             echo "VT3 Android debug build"
@@ -235,7 +219,7 @@ jobs:
             echo "Ref:               ${GITHUB_REF_NAME}"
             echo "Run:               ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Built (UTC):       $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "Runner:            ${RUNNER_OS} $(uname -m)"
+            echo "Built on:          self-hosted runner, $(uname -sm)"
             echo
             echo "APK version:       ${VERSION_NAME} (versionCode ${VERSION_CODE})"
             echo "Package:           ${PACKAGE}"
@@ -247,8 +231,15 @@ jobs:
             echo
             echo "Game executable"
             echo "---------------"
-            echo "Input:             repository secret (VT3_EXE_URL or VT3_EXE_B64), never committed"
+            echo "Supplied locally:  ${VT3_EXE}"
+            echo "Executable SHA256: ${EXE_SHA}"
             echo "Image SHA-256:     ${IMAGE_SHA256} (verified against build/game/image.bin)"
+            echo "The executable is not included in this artifact and was not uploaded anywhere."
+            echo
+            echo "Game data"
+            echo "---------"
+            echo "This APK carries no game data. The on-device installer is unchanged: it takes the"
+            echo "player's own disc image or extracted folder, verifies it and unpacks it on the phone."
             echo
             echo "Tests"
             echo "-----"
@@ -269,11 +260,26 @@ jobs:
             cat "$RUNNER_TEMP/java-test.txt"
             echo
             echo "Not covered by this workflow: running the game on a device (launch, Vulkan, audio,"
-            echo "touch controls, the diagnostics screen, saving/sharing the report)."
+            echo "touch controls, the diagnostics screen, saving and sharing the report)."
           } > artifact/BUILD_INFO.txt
 
           cat artifact/BUILD_INFO.txt >> "$GITHUB_STEP_SUMMARY"
           echo "APK size ${SIZE} bytes, sha256 ${SHA}"
+
+      # Only the three files below are uploaded. This makes that a checked fact rather than a claim.
+      - name: Make sure no game file reaches the artifact
+        run: |
+          set -euo pipefail
+          found=$(find artifact -type f ! -name 'VT3-Android.apk' ! -name 'SHA256SUMS.txt' ! -name 'BUILD_INFO.txt')
+          if [ -n "$found" ]; then
+            echo "::error title=Unexpected artifact file::The artifact would carry $(echo "$found" | tr '\n' ' '). Only the APK and its two text files may be published."
+            exit 1
+          fi
+          if find artifact \( -iname '*.exe' -o -iname '*.iso' -o -iname '*.bin' -o -iname '*.zip' \) | grep -q .; then
+            echo "::error title=Game file in artifact::Refusing to upload an executable, image or archive."
+            exit 1
+          fi
+          ls -l artifact
 
       - name: Upload the APK artifact
         uses: actions/upload-artifact@v4
@@ -286,11 +292,10 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ fromJSON(github.event.inputs.retention_days || '7') }}
 
-      # The runner is thrown away anyway; this makes sure nothing game-derived is left on disk
-      # even if the workspace is reused, and takes the executable out of the temp directory.
-      - name: Remove the temporary game files
+      # Leftovers only. The supplied executable is never touched: it is your file, outside the
+      # repository, and the next build needs it.
+      - name: Remove the build output
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/VT3.exe" "$RUNNER_TEMP/libvt3android.so" "$RUNNER_TEMP/classes.dex"
           rm -rf build artifact
-          echo "removed the staged executable and the translated build output"
+          echo "removed the translated build output; the supplied executable was left untouched"
