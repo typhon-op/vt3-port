@@ -144,7 +144,7 @@ report**, **Open last saved report**, **Clear logs** and **View last error**, sh
 app version, last report time and last error, and has a **detailed logging** switch for
 troubleshooting (off by default, so normal play is not flooded).
 
-The report is a real `VT3_Diagnostic_Report_<date>_<time>.txt` file you pick a folder and name for,
+The report is a real `VT3_Diagnostic_Report.txt` file you pick a folder and name for,
 with sections for application info, the install and its file verification, graphics and frame
 statistics, audio diagnostics, the Android lifecycle, the error history and a summary of detected
 problems. It is saved through the Storage Access Framework, so it needs no storage permission;

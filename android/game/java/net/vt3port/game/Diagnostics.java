@@ -183,7 +183,7 @@ public class Diagnostics extends Activity {
         DiagData data = DiagInfo.collect(this, core);
         String text = DiagReport.build(data, core);
         pendingText = text;
-        pendingName = DiagReport.suggestName(data.generatedAt);
+        pendingName = DiagReport.suggestName();
         DiagLog.i("diagnostics", "report generated, " + text.length() + " chars, " + pendingName);
         return text;
     }

@@ -17,13 +17,14 @@ import java.util.Map;
 public final class DiagReport {
     public static final String TITLE = "VT3 Android diagnostic report";
     public static final String FORMAT = "1";
+    /** The report's name, for the app's own copy and for the Save/Share sheet. One file, rewritten
+     *  in place; the date it was generated is written inside the report, not appended to the name. */
+    public static final String FILE_NAME = "VT3_Diagnostic_Report.txt";
 
     private DiagReport() {}
 
-    /** VT3_Diagnostic_Report_20261120_231500.txt */
-    public static String suggestName(long millis) {
-        return "VT3_Diagnostic_Report_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-                .format(new Date(millis)) + ".txt";
+    public static String suggestName() {
+        return FILE_NAME;
     }
 
     public static String build(DiagData d, DiagCore core) {

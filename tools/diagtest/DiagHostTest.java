@@ -118,8 +118,8 @@ public final class DiagHostTest {
         check(!report.contains("null"), "no null leaks into the text");
         check(report.length() > 1200, "report is substantive (" + report.length() + " chars)");
 
-        String name = DiagReport.suggestName(d.generatedAt);
-        check(name.matches("VT3_Diagnostic_Report_\\d{8}_\\d{6}\\.txt"), "report name is a plain .txt name");
+        String name = DiagReport.suggestName();
+        check(name.equals("VT3_Diagnostic_Report.txt"), "report name is the documented .txt name");
         File out = new File(dir, name);
         Files.write(out.toPath(), report.getBytes(StandardCharsets.UTF_8));
         check(out.isFile() && out.length() > 1200, "the .txt file exists with content");
