@@ -97,21 +97,26 @@ The Linux and Windows steps have not been tested yet. Please report what breaks.
 `.github/workflows/android-debug.yml` builds, tests and verifies the same APK on a GitHub runner. It
 is manual: **Actions → VT3 Android Debug → Run workflow**.
 
-Two repository secrets (Settings → Secrets and variables → Actions):
+Repository secrets (Settings → Secrets and variables → Actions):
 
 | Secret | Holds |
 |---|---|
-| `VT3_EXE_B64` | Required. base64 of your `VT3.exe`, or of a zip that contains it. |
-| `DEBUG_KEYSTORE_B64` | Optional. base64 of an existing `debug.keystore`, to keep the signing identity. |
+| `VT3_EXE_URL` | Required, unless `VT3_EXE_B64` is set. A download link you control — for a Dropbox share link, replace `dl=0` with `dl=1`. |
+| `VT3_EXE_TOKEN` | Optional. Sent as `Authorization: Bearer …` when the host needs one. |
+| `VT3_EXE_B64` | Base64 of the executable or of a zip holding it. Only for inputs under GitHub's 48 KB secret limit; `VT3.exe` is 5.5 MB, so the URL is the normal path. |
+| `DEBUG_KEYSTORE_B64` | Optional. Base64 of an existing `debug.keystore`, to keep the signing identity. |
 
 The workflow refuses to run unless the repository is private: the APK carries shader data
 translated from the game, and artifacts are downloadable by everyone who can read the repository.
-The executable is decoded only into the runner's temp directory, is never committed, never fetched
-from a URL, and never printed — only its SHA-256, which is not a credential. The job also fails if
-`build/game/image.bin` is not `52be3cda…fc80bf`, i.e. if the file is not the English v1.0.1 build.
+The executable is written only to the runner's temp directory, is never committed and never
+printed — the log shows its size and SHA-256, which is not a credential. curl's stderr is sent to a
+file rather than the log, so a link carrying a token cannot leak; revoke or rotate the link
+whenever you like. The job fails if `build/game/image.bin` is not `52be3cda…fc80bf`, i.e. if the
+file is not the English v1.0.1 build, so a wrong or replaced executable cannot get through.
 
 ```bash
-base64 -w0 VT3.exe                      # Linux: paste the output into VT3_EXE_B64
+# only for the 48 KB path (a small zip):
+base64 -w0 VT3.exe                      # Linux, then paste into VT3_EXE_B64
 base64 -i VT3.exe | tr -d '\n' | pbcopy # macOS
 ```
 

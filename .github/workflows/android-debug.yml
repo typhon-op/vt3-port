@@ -80,26 +80,48 @@ jobs:
           test -x "${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS}/aapt2"
           test -x "${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang"
 
-      # The executable is never committed and never downloaded from a URL: it comes from the
-      # repository secret VT3_EXE_B64 (base64 of VT3.exe, or of a zip that contains it).
-      - name: Stage VT3.exe from the repository secret
+      # The executable is never committed. It comes from a repository secret: a URL you control
+      # (VT3_EXE_URL, optionally with a bearer token in VT3_EXE_TOKEN), or base64 in VT3_EXE_B64
+      # for a file small enough to fit GitHub's 48 KB secret limit. Nothing about the source is
+      # printed; curl's stderr goes to a file so a URL carrying a token cannot reach the log.
+      - name: Fetch VT3.exe from the repository secrets
         env:
+          VT3_EXE_URL: ${{ secrets.VT3_EXE_URL }}
+          VT3_EXE_TOKEN: ${{ secrets.VT3_EXE_TOKEN }}
           VT3_EXE_B64: ${{ secrets.VT3_EXE_B64 }}
         run: |
           set -euo pipefail
-          if [ -z "${VT3_EXE_B64:-}" ]; then
-            echo "::error title=VT3_EXE_B64 is not set::Add the repository secret VT3_EXE_B64 holding base64 of your VT3.exe (English v1.0.1, or a zip containing it). Settings -> Secrets and variables -> Actions -> New repository secret."
-            exit 1
-          fi
           umask 077
-          printf '%s' "$VT3_EXE_B64" | base64 -d > "$RUNNER_TEMP/VT3.exe"
-          size=$(stat -c %s "$RUNNER_TEMP/VT3.exe")
-          if [ "$size" -lt 1000000 ]; then
-            echo "::error title=VT3_EXE_B64 is not a game executable::The decoded file is only ${size} bytes. Check that the secret holds the base64 of VT3.exe or of the zip that contains it."
+          out="$RUNNER_TEMP/VT3.exe"
+          if [ -n "${VT3_EXE_B64:-}" ]; then
+            printf '%s' "$VT3_EXE_B64" | base64 -d > "$out" || {
+              echo "::error title=VT3_EXE_B64 is not valid base64::Regenerate it without line breaks (Linux: base64 -w0, macOS: base64 | tr -d '\\n')."
+              exit 1
+            }
+            echo "source: VT3_EXE_B64 secret"
+          elif [ -n "${VT3_EXE_URL:-}" ]; then
+            hdr=()
+            if [ -n "${VT3_EXE_TOKEN:-}" ]; then hdr=(-H "Authorization: Bearer ${VT3_EXE_TOKEN}"); fi
+            if ! curl --fail --silent --show-error --location --retry 3 --retry-delay 5 \
+                      --max-time 600 "${hdr[@]}" -o "$out" "$VT3_EXE_URL" \
+                      2> "$RUNNER_TEMP/curl.err"; then
+              rm -f "$RUNNER_TEMP/curl.err"
+              echo "::error title=VT3.exe download failed::curl could not fetch the VT3_EXE_URL secret. Check that the link is still shared (a Dropbox link needs dl=1 at the end), that it has not expired, and that the runner can reach the host."
+              exit 1
+            fi
+            rm -f "$RUNNER_TEMP/curl.err"
+            echo "source: VT3_EXE_URL secret"
+          else
+            echo "::error title=No game executable secret::Set the repository secret VT3_EXE_URL to a download link you control (Dropbox: replace dl=0 with dl=1), or VT3_EXE_B64 for a file under 48 KB. Settings -> Secrets and variables -> Actions -> New repository secret."
             exit 1
           fi
-          echo "VT3_EXE=$RUNNER_TEMP/VT3.exe" >> "$GITHUB_ENV"
-          echo "staged input: ${size} bytes, sha256 $(sha256sum "$RUNNER_TEMP/VT3.exe" | cut -d' ' -f1)"
+          size=$(stat -c %s "$out")
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error title=The executable is missing or truncated::The staged file is ${size} bytes, far too small for VT3.exe (5,538,816 bytes) or its zip. Check the secret's link or base64 payload."
+            exit 1
+          fi
+          echo "VT3_EXE=$out" >> "$GITHUB_ENV"
+          echo "staged input: ${size} bytes, sha256 $(sha256sum "$out" | cut -d' ' -f1)"
 
       # Optional: reuse the existing debug signing identity so a new APK installs over an old one.
       # The keystore must use storepass/keypass "android" and alias "vt3port", as build_apk.py expects.
@@ -225,7 +247,7 @@ jobs:
             echo
             echo "Game executable"
             echo "---------------"
-            echo "Input:             supplied as the VT3_EXE_B64 secret, never committed"
+            echo "Input:             repository secret (VT3_EXE_URL or VT3_EXE_B64), never committed"
             echo "Image SHA-256:     ${IMAGE_SHA256} (verified against build/game/image.bin)"
             echo
             echo "Tests"
