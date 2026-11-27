@@ -8,6 +8,7 @@
 #include "shim_internal.h"
 #include "vt3/vt3_input.h"
 #include "vt3/vt3_log.h"
+#include "vt3/vt3_menu.h"
 #include "vt3/vt3_platform.h"
 #include "vt3/vt3_touch.h"
 
@@ -282,10 +283,15 @@ void d3d9_gpu_present(void)
     if (!g_gpu_ok) return;
     int w = 0, h = 0;
     vt3_platform_drawable_size(&w, &h);
+    /* The quick menu runs its own present loop while it is open, so the guest thread waits here:
+     * that is what makes it a pause. It returns at once when the menu is closed. */
+    vt3_menu_handle(w, h);
     vt3_touch_frame(w, h);         /* on-screen controls, drawn over the game's frame */
+    vt3_menu_overlay(w, h);        /* FPS and temperatures, over the game and under the controls */
     vt3_gfx_present(w, h);
     vt3_platform_swap();
     vt3_platform_pump_events();    /* keeps the window responsive; quit requests are ignored here */
+    vt3_menu_tick();               /* one presented frame: what the overlay's FPS counts */
 }
 
 vt3_tex d3d9_gpu_rt_create(uint32_t w, uint32_t h, uint32_t fmt)

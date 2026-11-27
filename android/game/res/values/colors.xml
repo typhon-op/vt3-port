@@ -1,20 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The launcher's palette, taken from the port's own VT3 icon (assets/icon/vt3_logo_icon_1024.png):
-     the red of the icon's tile, the two blues of the "3", the navy of its outlines, and the
-     yellow-green of a tennis ball for the one action that moves the setup forward. -->
+<!-- The Virtua Tennis 3 palette: pale silver and white backgrounds, translucent light-grey panels,
+     orange-red selection bars, dark charcoal-brown text and gold accents. The names are the ones the
+     launcher has always used, so every layout and every Java screen picks the theme up; the values
+     are the VT3 menu palette rather than the old navy/blue. -->
 <resources>
-    <color name="vt3_page">#0B1730</color>
-    <color name="vt3_page_deep">#060E1F</color>
-    <color name="vt3_red">#D8402B</color>
-    <color name="vt3_red_dark">#A62A19</color>
-    <color name="vt3_blue">#1F5FC4</color>
-    <color name="vt3_blue_light">#6FA8DC</color>
-    <color name="vt3_ball">#D8E64A</color>
-    <color name="vt3_ball_dark">#C2D42C</color>
-    <color name="vt3_navy">#16254C</color>
-    <color name="vt3_card">#13254A</color>
-    <color name="vt3_line">#2B4577</color>
-    <color name="vt3_text">#FFFFFF</color>
-    <color name="vt3_muted">#9DB0D0</color>
-    <color name="vt3_disabled">#3A4A6B</color>
+    <!-- Backgrounds: pale silver, a deeper silver for bars, and near-white for raised panels. -->
+    <color name="vt3_page">#E7EBEF</color>
+    <color name="vt3_page_deep">#C9D2DA</color>
+    <color name="vt3_silver">#DCE2E8</color>
+    <color name="vt3_silver_light">#F3F6F9</color>
+    <color name="vt3_white">#FFFFFF</color>
+
+    <!-- Panels: translucent silver, used behind menu lists and settings rows. -->
+    <color name="vt3_panel">#E6F2F5F8</color>
+    <color name="vt3_panel_solid">#F2F5F8</color>
+    <color name="vt3_panel_strong">#F7FAFC</color>
+    <color name="vt3_line">#AEB9C4</color>
+    <color name="vt3_line_light">#D3DBE2</color>
+
+    <!-- Text: dark charcoal on light panels, as the game's own menus print it. -->
+    <color name="vt3_text">#2B2723</color>
+    <color name="vt3_ink">#2B2723</color>
+    <color name="vt3_ink_soft">#57504A</color>
+    <color name="vt3_muted">#6E7278</color>
+    <color name="vt3_text_on_bar">#FFFFFF</color>
+    <color name="vt3_disabled">#B4BCC4</color>
+
+    <!-- Selection and accents: orange-red bars, a deeper red for edges, gold for highlights. -->
+    <color name="vt3_orange">#E2571F</color>
+    <color name="vt3_orange_deep">#B33A0E</color>
+    <color name="vt3_orange_light">#F07B3C</color>
+    <color name="vt3_red">#E2571F</color>
+    <color name="vt3_red_dark">#B33A0E</color>
+    <color name="vt3_gold">#D9A03C</color>
+    <color name="vt3_gold_light">#F0C878</color>
+
+    <!-- Kept names: the ball colour is the gold accent, the blues are the cool grey-blue of the
+         silver panels' shadows. -->
+    <color name="vt3_ball">#D9A03C</color>
+    <color name="vt3_ball_dark">#B7822A</color>
+    <color name="vt3_blue">#4C6B85</color>
+    <color name="vt3_blue_light">#6F8CA4</color>
+    <color name="vt3_navy">#3E4A55</color>
+
+    <!-- Surfaces. -->
+    <color name="vt3_card">#F1F4F7</color>
+    <color name="vt3_bar_fill">#F6F8FA</color>
+    <color name="vt3_bar_edge">#B9C3CD</color>
+    <color name="vt3_scrim">#33000000</color>
+    <color name="vt3_shadow">#26000000</color>
 </resources>

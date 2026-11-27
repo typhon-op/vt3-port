@@ -15,6 +15,8 @@
 static JavaVM *g_vm;
 static jclass g_class;
 static jmethodID g_write;
+static jclass g_bridge;
+static jmethodID g_open_settings;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -34,7 +36,35 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
         g_write = (*env)->GetStaticMethodID(env, g_class, "nativeWrite",
                                             "(ILjava/lang/String;ILjava/lang/String;)V");
     if (!g_write && g_class) (*env)->ExceptionClear(env);
+
+    /* The quick menu's Settings row opens the Java settings screen through this class: an
+     * Application context can start an activity, so no Activity reference has to be carried
+     * across the JNI boundary. */
+    jclass bridge = (*env)->FindClass(env, "net/vt3port/game/Bridge");
+    if (bridge) {
+        g_bridge = (jclass)(*env)->NewGlobalRef(env, bridge);
+        (*env)->DeleteLocalRef(env, bridge);
+        if (g_bridge)
+            g_open_settings = (*env)->GetStaticMethodID(env, g_bridge, "openSettings", "()V");
+        if (!g_open_settings) (*env)->ExceptionClear(env);
+    } else {
+        (*env)->ExceptionClear(env);
+    }
     return JNI_VERSION_1_6;
+}
+
+void vt3_android_open_settings(void)
+{
+    if (!g_vm || !g_bridge || !g_open_settings) return;
+    JNIEnv *env = NULL;
+    jint rc = (*g_vm)->GetEnv(g_vm, (void **)&env, JNI_VERSION_1_6);
+    if (rc == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK) return;
+    } else if (rc != JNI_OK || !env) {
+        return;
+    }
+    (*env)->CallStaticVoidMethod(env, g_bridge, g_open_settings);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
 
 int vt3_diag_jni_write(int level, const char *component, int code, const char *message)

@@ -2,6 +2,7 @@ package net.vt3port.game;
 
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.PowerManager;
 import android.util.DisplayMetrics;
@@ -9,24 +10,26 @@ import android.view.Display;
 import android.view.WindowManager;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.ByteArrayOutputStream;
-import java.io.FileInputStream;
-import java.io.InputStream;
 
 /**
  * Resolves the graphics settings into the marker files the runtime reads at start-up.
  *
  * The ladder starts at the panel: a flagship renders at its own resolution with 16x anisotropy and
- * a 60 fps cap, a Helio G85 at 720p with 2x and 30 fps. A preset is only a set of defaults; every
- * option has its own override, and an override wins over whatever the preset or the device tier
- * chose. Nothing here restricts a device by name alone: unknown hardware starts in the middle and
- * the runtime's own frame statistics decide whether it stays there.
+ * a 60 fps cap; a low-end Helio renders at 720p with 2x and 30 fps. A preset is only a set of
+ * defaults -- Low, Medium, High or the device's own Auto -- and every option has its own override
+ * that wins over the preset. Touching an individual option puts the preset into Custom rather than
+ * silently keeping a preset name that no longer describes the settings.
  *
- * Written markers (all optional, all read in android_entry.c):
- *   preset, override_fps, override_res, override_aniso, override_scale   what the player chose
- *   fps_cap, render_h, aniso, render_scale_pct, thermal                  what the runtime uses
+ * Nothing here decides by brand: the tier comes from the SoC model Android reports, then memory,
+ * core count and low-RAM status can only lower it, and the runtime's own frame statistics are what
+ * actually keeps a device comfortable. A MediaTek Dimensity and a Snapdragon of the same class get
+ * the same starting point.
+ *
+ * Markers written (all optional, all read in android_entry.c):
+ *   preset, override_fps, override_res, override_aniso, override_scale,
+ *   override_shadows, override_widescreen, thermal_guard        what the player chose
+ *   fps_cap, render_h, aniso, render_scale_pct, no_vsm,
+ *   no_widescreen                                               what the runtime uses
  */
 public final class GraphicsProfile {
     private static final String TAG = "VT3Profile";
@@ -40,16 +43,34 @@ public final class GraphicsProfile {
     static final int[] TIER_FPS = { 60, 60, 60, 60, 30, 30 };
     static final int[] TIER_ANISO = { 16, 16, 8, 4, 2, 1 };
 
-    public static final String[] PRESET_IDS = { "auto", "quality", "balanced", "performance", "low" };
-    public static final String[] PRESET_LABELS = { "Auto (device)", "Quality", "Balanced", "Performance", "Low" };
+    /* Low, Medium and High pin a tier; Auto follows the device and Custom keeps the overrides. */
+    public static final String[] PRESET_IDS = { "auto", "low", "medium", "high", "custom" };
+    public static final String[] PRESET_LABELS = { "Auto (device)", "Low", "Medium", "High", "Custom" };
+
+    /* The frame limits the runtime is tested with. 0 means uncapped (the panel's own rate). */
+    public static final int[] FPS = { -1, 30, 35, 40, 45, 50, 55, 60, 0 };
+    public static final String[] FPS_LABEL = {
+            "Auto", "30 fps", "35 fps", "40 fps", "45 fps", "50 fps", "55 fps", "60 fps", "Uncapped"
+    };
+
+    /* Render heights. 0 is the panel's own resolution, which is what the top tiers use. */
+    public static final int[] RES = { -1, 0, 1440, 1220, 1080, 900, 720, 540 };
+    public static final String[] RES_LABEL = {
+            "Auto", "Native panel", "1440p", "1220p", "1080p", "900p", "720p", "540p"
+    };
+
+    public static final int[] ANISO = { -1, 1, 2, 4, 8, 16 };
+    public static final String[] ANISO_LABEL = { "Auto", "Off (1x)", "2x", "4x", "8x", "16x" };
 
     private GraphicsProfile() {}
 
-    /** The tier a preset pins, or -1 for auto. */
+    /** The tier a preset pins, or -1 for Auto/Custom (both follow the device). */
     public static int presetTier(String preset) {
         if (preset == null) return -1;
         switch (preset) {
+            case "high":
             case "quality": return ULTRA;
+            case "medium":
             case "balanced": return BALANCED;
             case "performance": return PERFORMANCE;
             case "low": return LOW;
@@ -57,22 +78,31 @@ public final class GraphicsProfile {
         }
     }
 
-    /** Classify this device. Unknown hardware starts at Balanced, never at Minimum. */
+    /**
+     * Classify this device. The SoC model Android reports is the starting point; memory, cores and
+     * low-RAM status can only lower the result, never raise it. Unknown hardware starts Balanced.
+     */
     public static int classify(Context c) {
-        String soc = (Build.VERSION.SDK_INT >= 31 ? Build.SOC_MODEL : Build.HARDWARE) + " " + Build.HARDWARE;
-        soc = soc.toLowerCase();
+        String soc = "";
+        if (Build.VERSION.SDK_INT >= 31) {
+            soc = (nz(Build.SOC_MANUFACTURER) + " " + nz(Build.SOC_MODEL)).trim();
+        }
+        if (soc.isEmpty()) soc = nz(Build.HARDWARE);
+        soc = (soc + " " + nz(Build.HARDWARE) + " " + nz(Build.BOARD)).toLowerCase();
+
         int tier = BALANCED;
-        if (matches(soc, "sm8650", "sm8550", "sm8475", "sm8450", "sm8350", "mt6985", "mt6983",
-                "mt6989", "exynos2400", "exynos2200", "tensor g3", "tensor g4", "qti-mtp")) {
+        if (matches(soc, "sm8750", "sm8650", "sm8550", "sm8475", "sm8450", "sm8350",
+                "mt6991", "mt6989", "mt6985", "mt6983", "exynos2400", "exynos2200",
+                "tensor g3", "tensor g4")) {
+            tier = ULTRA;
+        } else if (matches(soc, "sm8250", "sm7675", "sm7550", "sm7450", "sm7325", "sm7250",
+                "mt6897", "mt6895", "mt6886", "mt6879", "mt6885", "mt6835",
+                "exynos1480", "exynos1380", "tensor")) {
             tier = HIGH;
-            if (matches(soc, "sm8650", "sm8550", "mt6985", "mt6989", "exynos2400")) tier = ULTRA;
-        } else if (matches(soc, "sm8250", "sm7325", "sm7675", "sm7450", "mt6879", "mt6885",
-                "mt6895", "mt6835", "exynos1380", "exynos1480", "tensor")) {
-            tier = BALANCED;
-        } else if (matches(soc, "mt6769", "mt6768", "mt6765", "sm6225", "sm6115", "sm4350",
-                "mt6833", "mt6853", "exynos850", "exynos1330", "ums512")) {
+        } else if (matches(soc, "mt6789", "mt6785", "mt6769", "mt6768", "mt6765",
+                "sm6225", "sm6115", "sm4350", "mt6833", "mt6853", "exynos850", "exynos1330")) {
             tier = LOW;
-        } else if (matches(soc, "mt6739", "mt6761", "mt6762", "msm8953", "qcom", "sc9863")) {
+        } else if (matches(soc, "mt6739", "mt6761", "mt6762", "msm8953", "sc9863", "ums512")) {
             tier = MINIMUM;
         }
         /* A small or low-RAM device cannot hold a high tier whatever the SoC name says. */
@@ -81,7 +111,12 @@ public final class GraphicsProfile {
         if (cores <= 4) tier = Math.max(tier, LOW);
         if (mem > 0 && mem < 3L << 30) tier = Math.max(tier, LOW);
         if (mem > 0 && mem < 2L << 30) tier = Math.max(tier, MINIMUM);
+        if (lowRam(c)) tier = Math.max(tier, LOW);
         return tier;
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 
     private static boolean matches(String haystack, String... needles) {
@@ -97,23 +132,74 @@ public final class GraphicsProfile {
         return info.totalMem;
     }
 
+    private static boolean lowRam(Context c) {
+        ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        return am != null && am.isLowRamDevice();
+    }
+
+    /** What the settings screen says about the hardware: real values, no guessed GPU names. */
+    public static String describeDevice(Context c) {
+        StringBuilder s = new StringBuilder();
+        String maker = Build.VERSION.SDK_INT >= 31 ? nz(Build.SOC_MANUFACTURER) : "";
+        String model = Build.VERSION.SDK_INT >= 31 ? nz(Build.SOC_MODEL) : "";
+        if (!model.isEmpty()) {
+            s.append(maker.isEmpty() ? "" : maker + " ").append(model);
+        } else {
+            s.append(nz(Build.HARDWARE));
+        }
+        long mem = totalMem(c);
+        if (mem > 0) s.append("  ·  ").append(String.format(java.util.Locale.US, "%.1f GB RAM",
+                mem / 1073741824.0));
+        s.append("  ·  ").append(Runtime.getRuntime().availableProcessors()).append(" cores");
+        String vk = vulkanInfo(c);
+        if (vk != null) s.append("\n").append(vk);
+        return s.toString();
+    }
+
+    /** The Vulkan level and version the platform advertises, which is what the renderer can use. */
+    public static String vulkanInfo(Context c) {
+        PackageManager pm = c.getPackageManager();
+        if (!pm.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)) return null;
+        int level = -1, version = -1;
+        try {
+            level = pm.getSystemAvailableFeatures().length; /* keep the API call below cheap */
+            for (android.content.pm.FeatureInfo f : pm.getSystemAvailableFeatures()) {
+                if (PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL.equals(f.name)) level = f.version;
+                if (PackageManager.FEATURE_VULKAN_HARDWARE_VERSION.equals(f.name)) version = f.version;
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        StringBuilder s = new StringBuilder("Vulkan");
+        if (version > 0) {
+            s.append(' ').append((version >> 22) & 0x3ff).append('.')
+                    .append((version >> 12) & 0x3ff).append('.')
+                    .append(version & 0xfff);
+        }
+        if (level >= 0) s.append(" (hardware level ").append(level).append(')');
+        return s.toString();
+    }
+
     /** Resolve the preset, the overrides and the thermal status into the markers the runtime reads. */
     public static void apply(Context c, File root) {
-        String preset = read(root, "preset", "auto");
+        String preset = Markers.read(root, "preset", "auto");
         int base = presetTier(preset);
         int tier = base >= 0 ? base : classify(c);
+
+        boolean guard = Markers.flag(root, "thermal_guard", true);
+        int thermal = Markers.intOr(root, "thermal", 0);
+        if (!guard) thermal = 0;
 
         /* Thermal: nothing at NONE/LIGHT, one rung at SEVERE, two at CRITICAL and beyond. The rung
          * moves the resolution for the next launch only, which is the gradual lever; the runtime
          * lowers anisotropy while a match runs. */
-        int thermal = readInt(root, "thermal", 0);
         int rung = thermal >= 4 ? 2 : thermal >= 3 ? 1 : 0;
         int hi = Math.min(TIER_NAME.length - 1, tier + rung);
 
-        Integer ofps = override(root, "override_fps");
-        Integer ores = override(root, "override_res");
-        Integer oaniso = override(root, "override_aniso");
-        Integer oscale = override(root, "override_scale");
+        Integer ofps = Markers.readInt(root, "override_fps", null);
+        Integer ores = Markers.readInt(root, "override_res", null);
+        Integer oaniso = Markers.readInt(root, "override_aniso", null);
+        Integer oscale = Markers.readInt(root, "override_scale", null);
 
         int fps = ofps != null ? ofps : TIER_FPS[tier];
         int height = ores != null ? ores : TIER_H[hi];
@@ -123,20 +209,27 @@ public final class GraphicsProfile {
          * has to move the scale instead: 85 % at SEVERE, 75 % at CRITICAL. Never applied to a height
          * the player pinned themselves. */
         if (ores == null && height == 0 && rung > 0) scale = Math.min(scale, rung >= 2 ? 75 : 85);
-
         /* The runtime lowers anisotropy under heat; the marker already reflects the cap so a
          * restart does not undo it. */
         if (thermal >= 2) aniso = Math.min(aniso, 8);
         if (thermal >= 3) aniso = Math.min(aniso, 4);
         if (thermal >= 4) aniso = Math.min(aniso, 2);
 
-        write(root, "fps_cap", Integer.toString(fps));
-        write(root, "render_h", height > 0 ? Integer.toString(height) : null);
-        write(root, "aniso", Integer.toString(aniso));
-        write(root, "render_scale_pct", Integer.toString(scale));
+        /* Shadows (the game's variance shadow maps) follow the preset unless overridden: the two
+         * top tiers keep them, everything below renders without them. */
+        boolean shadows = Markers.flag(root, "override_shadows", tier <= HIGH);
+        /* Widescreen is on unless the player turned it off. */
+        boolean wide = Markers.flag(root, "override_widescreen", true);
+
+        Markers.write(root, "fps_cap", Integer.toString(fps));
+        Markers.write(root, "render_h", height > 0 ? Integer.toString(height) : null);
+        Markers.write(root, "aniso", Integer.toString(aniso));
+        Markers.write(root, "render_scale_pct", Integer.toString(scale));
+        Markers.write(root, "no_vsm", shadows ? null : "1");
+        Markers.write(root, "no_widescreen", wide ? null : "1");
         DiagLog.i(TAG, "tier " + TIER_NAME[tier] + " preset " + preset + " thermal " + thermal
-                + " -> fps " + fps + " height " + (height > 0 ? height : "native")
-                + " aniso " + aniso + " scale " + scale + "%");
+                + " guard " + guard + " -> fps " + fps + " height " + (height > 0 ? height : "native")
+                + " aniso " + aniso + " scale " + scale + "% shadows " + shadows + " wide " + wide);
     }
 
     /** Panel size and rate, for the settings screen. */
@@ -161,50 +254,21 @@ public final class GraphicsProfile {
         }
     }
 
-    /* ---- marker files ------------------------------------------------------------- */
+    /* ---- marker access, kept for the diagnostics report and the tests ---- */
 
-    static String read(File root, String name, String def) {
-        File f = new File(root, name);
-        if (!f.exists()) return def;
-        try (InputStream in = new FileInputStream(f)) {
-            ByteArrayOutputStream o = new ByteArrayOutputStream();
-            byte[] b = new byte[256];
-            for (int n; (n = in.read(b)) > 0; ) o.write(b, 0, n);
-            String s = o.toString("UTF-8").trim();
-            return s.isEmpty() ? def : s;
-        } catch (IOException e) {
-            return def;
-        }
+    /** A marker's text, or def when it is absent or empty. */
+    public static String read(File root, String name, String def) {
+        return Markers.read(root, name, def);
     }
 
-    static Integer override(File root, String name) {
-        String s = read(root, name, null);
-        if (s == null) return null;
-        try {
-            return Integer.parseInt(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
+    /** A marker as an integer, or def when it is absent or not a number. */
     public static int readInt(File root, String name, int def) {
-        Integer v = override(root, name);
-        return v != null ? v : def;
+        return Markers.intOr(root, name, def);
     }
 
-    /** Write a marker, or delete it when value is null. */
-    static void write(File root, String name, String value) {
-        File f = new File(root, name);
-        try {
-            if (value == null) {
-                f.delete();
-                return;
-            }
-            try (FileOutputStream out = new FileOutputStream(f)) {
-                out.write(value.getBytes("UTF-8"));
-            }
-        } catch (IOException e) {
-            DiagLog.w(TAG, "could not write " + name + ": " + e.getMessage());
-        }
+    /** The current thermal status, or -1 when the platform has no thermal service. */
+    public static int thermalStatus(Context c) {
+        PowerManager pm = (PowerManager) c.getSystemService(Context.POWER_SERVICE);
+        return pm != null ? pm.getCurrentThermalStatus() : -1;
     }
 }

@@ -108,6 +108,37 @@ static void apply_settings(void)
         if (getenv("VT3_RENDER_SCALE") == NULL) setenv("VT3_RENDER_SCALE", val, 0);
         VT3_INFO("android: VT3_RENDER_SCALE=%s", val);
     }
+
+    /* The rest of the settings screen, as flags. Each marker is only turned into an environment
+     * variable the engine already understands, so no option exists here that the runtime does not
+     * read: widescreen and the variance shadow maps are the game's own renderer switches, the
+     * overlay and the quick menu are this port's, and volume/mute are the mixer's. */
+    if (marker_int("no_vsm", 0)) setenv("VT3_NO_VSM", "1", 0);
+    if (marker_int("no_widescreen", 0)) setenv("VT3_NO_WIDESCREEN", "1", 0);
+    set_int_env("VT3_PERF_OVERLAY", marker_int("perf_overlay", 0));
+    set_int_env("VT3_PERF_OVERLAY_FULL", marker_int("perf_overlay_full", 0));
+    set_int_env("VT3_TOUCH", marker_int("touch", 1));
+    set_int_env("VT3_TOUCH_FORCE", marker_int("touch_force", 0));
+    int tscale = marker_int("touch_scale_pct", 0);
+    if (tscale >= 40 && tscale <= 250) {
+        char val[16];
+        snprintf(val, sizeof val, "%.2f", tscale / 100.0);
+        setenv("VT3_TOUCH_SCALE", val, 0);
+    }
+    int talpha = marker_int("touch_alpha_pct", 0);
+    if (talpha >= 10 && talpha <= 100) {
+        char val[16];
+        snprintf(val, sizeof val, "%.2f", talpha / 100.0);
+        setenv("VT3_TOUCH_ALPHA", val, 0);
+    }
+    if (marker_int("touch_mono", 0)) setenv("VT3_TOUCH_COLOR", "0", 0);
+    int vol = marker_int("audio_volume", 100);
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    set_int_env("VT3_AUDIO_VOLUME", vol);
+    set_int_env("VT3_AUDIO_MUTE", marker_int("audio_mute", 0));
+    if (marker_int("trace_audio", 0)) setenv("VT3_TRACE_AUDIO", "1", 0);
+    if (marker_int("trace_fps", 0)) setenv("VT3_TRACE_FPS", "1", 0);
 }
 
 /* Diagnostics come up before anything else, so a failure in the rest of start-up is recorded. The

@@ -280,6 +280,16 @@ static void read_env(void)
 }
 
 /* A physical keyboard or gamepad is in use: the controls stay out of the way. */
+/* Re-reads the VT3_TOUCH* variables. The quick menu toggles the on-screen controls while the game
+ * is running, so the settings it writes have to reach this module without a restart. */
+void vt3_touch_reload(void)
+{
+    read_env();
+    g.draw_mask = 0;
+    g.hidden_logged = 0;
+    VT3_CINFO("touch", "reloaded: %s", g.enabled ? "on" : "off");
+}
+
 static int physical_present(void)
 {
     if (g.force) return 0;

@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A pick button: the card's navy with the icon's red along its edge. -->
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#40FFFFFF">
+<!-- A pick button: the silver plate of a menu bar, edged in the selection orange. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33E2571F">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#1B2F58" />
-            <corners android:radius="10dp" />
-            <stroke android:width="1dp" android:color="@color/vt3_red" />
+            <gradient
+                android:angle="270"
+                android:startColor="#FFFFFF"
+                android:endColor="#DCE3EA" />
+            <corners android:radius="8dp" />
+            <stroke android:width="1dp" android:color="#E2571F" />
         </shape>
     </item>
 </ripple>

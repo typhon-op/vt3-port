@@ -1,29 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The launcher's screens. Platform Material only: the APK is packaged with aapt2 and d8 (see
-     android/build_apk.py), so there is no AppCompat or other AndroidX library to lean on. -->
+<!-- The launcher's screens, in the Virtua Tennis 3 menu palette: pale silver page, translucent silver
+     panels, orange-red selection bars and dark charcoal text. Platform Material only: the APK is
+     packaged with aapt2 and d8 (see android/build_apk.py), so there is no AppCompat or AndroidX. -->
 <resources>
-    <style name="Theme.VT3" parent="@android:style/Theme.Material.NoActionBar">
+    <style name="Theme.VT3" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/vt3_page</item>
+        <!-- The system bars follow the app's own silver page; nothing is copied from the game's
+             screenshots, they are simply made to match the theme rather than fight it. -->
         <item name="android:statusBarColor">@color/vt3_page_deep</item>
         <item name="android:navigationBarColor">@color/vt3_page_deep</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:colorPrimary">@color/vt3_navy</item>
         <item name="android:colorPrimaryDark">@color/vt3_page_deep</item>
-        <item name="android:colorAccent">@color/vt3_red</item>
-        <item name="android:textColorPrimary">@color/vt3_text</item>
+        <item name="android:colorAccent">@color/vt3_orange</item>
+        <item name="android:textColorPrimary">@color/vt3_ink</item>
         <item name="android:textColorSecondary">@color/vt3_muted</item>
         <item name="android:buttonStyle">@style/Vt3Button</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 
     <!-- The game itself: black behind the surface, nothing drawn over it. -->
     <style name="Theme.VT3.Game" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:colorAccent">@color/vt3_ball</item>
+        <item name="android:colorAccent">@color/vt3_orange</item>
     </style>
 
-    <!-- A pick button: the card's navy with a red edge, as the icon's tile. -->
+    <!-- A menu bar: silver plate with a hairline edge, the shape the game uses for its own rows. -->
+    <style name="Vt3MenuBar">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">@drawable/bg_bar</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:paddingStart">22dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:paddingTop">14dp</item>
+        <item name="android:paddingBottom">14dp</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="Vt3MenuLabel">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textColor">@color/vt3_ink</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <style name="Vt3MenuHint">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">10dp</item>
+        <item name="android:textColor">@color/vt3_muted</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.1</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <!-- A big screen title: silver-white capitals, as the game's own headings. -->
+    <style name="Vt3Title">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/vt3_white</item>
+        <item name="android:textSize">26sp</item>
+        <item name="android:textStyle">bold|italic</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+        <item name="android:shadowColor">#66000000</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">2</item>
+        <item name="android:shadowRadius">6</item>
+    </style>
+
+    <style name="Vt3TitleSub">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:textColor">@color/vt3_silver_light</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <!-- A pick button: silver plate, orange hairline, charcoal label. -->
     <style name="Vt3Button" parent="@android:style/Widget.Material.Button">
         <item name="android:background">@drawable/bg_button_pick</item>
-        <item name="android:textColor">@color/vt3_text</item>
+        <item name="android:textColor">@color/vt3_ink</item>
         <item name="android:textSize">13sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textAllCaps">true</item>
@@ -36,16 +109,16 @@
         <item name="android:paddingEnd">16dp</item>
     </style>
 
-    <!-- The one action that moves setup forward: the tennis ball's yellow-green. -->
+    <!-- The one action that moves setup forward: the orange-red selection bar. -->
     <style name="Vt3Button.Install" parent="@style/Vt3Button">
         <item name="android:background">@drawable/bg_button_install</item>
-        <item name="android:textColor">@color/vt3_page_deep</item>
+        <item name="android:textColor">@color/vt3_white</item>
         <item name="android:textSize">17sp</item>
         <item name="android:letterSpacing">0.12</item>
         <item name="android:minHeight">58dp</item>
     </style>
 
-    <!-- One step of the setup: a card holding a numbered label, its explanation and its button. -->
+    <!-- One step of the setup: a translucent silver panel. -->
     <style name="Vt3Card">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
@@ -55,14 +128,14 @@
         <item name="android:padding">14dp</item>
     </style>
 
-    <!-- The numbered badge in front of a step's label. -->
+    <!-- The numbered badge in front of a step's label: the orange-red bar, shrunk to a disc. -->
     <style name="Vt3StepNumber">
         <item name="android:layout_width">26dp</item>
         <item name="android:layout_height">26dp</item>
         <item name="android:layout_marginEnd">10dp</item>
         <item name="android:background">@drawable/bg_step_number</item>
         <item name="android:gravity">center</item>
-        <item name="android:textColor">@color/vt3_text</item>
+        <item name="android:textColor">@color/vt3_white</item>
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:fontFamily">sans-serif-condensed</item>
@@ -73,7 +146,7 @@
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_weight">1</item>
-        <item name="android:textColor">@color/vt3_text</item>
+        <item name="android:textColor">@color/vt3_ink</item>
         <item name="android:textSize">16sp</item>
         <item name="android:textStyle">bold|italic</item>
         <item name="android:textAllCaps">true</item>
@@ -86,7 +159,7 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">8dp</item>
         <item name="android:layout_marginBottom">12dp</item>
-        <item name="android:textColor">@color/vt3_muted</item>
+        <item name="android:textColor">@color/vt3_ink_soft</item>
         <item name="android:textSize">12sp</item>
         <item name="android:lineSpacingExtra">2dp</item>
     </style>
@@ -96,7 +169,7 @@
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">8dp</item>
-        <item name="android:textColor">@color/vt3_blue_light</item>
+        <item name="android:textColor">@color/vt3_blue</item>
         <item name="android:textSize">11sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textAllCaps">true</item>
@@ -120,7 +193,68 @@
     <style name="Vt3Status">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:textColor">@color/vt3_muted</item>
+        <item name="android:textColor">@color/vt3_ink_soft</item>
         <item name="android:textSize">12sp</item>
+    </style>
+
+    <!-- Settings: the horizontal category strip and the rows under it. -->
+    <style name="Vt3Tab">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">@drawable/bg_tab</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:textColor">@color/vt3_ink</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="Vt3Section">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">18dp</item>
+        <item name="android:layout_marginBottom">6dp</item>
+        <item name="android:textColor">@color/vt3_orange_deep</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <style name="Vt3RowLabel">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textColor">@color/vt3_ink</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <style name="Vt3RowValue">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">12dp</item>
+        <item name="android:textColor">@color/vt3_blue</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">sans-serif-condensed</item>
+    </style>
+
+    <style name="Vt3RowHint">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:textColor">@color/vt3_muted</item>
+        <item name="android:textSize">11sp</item>
     </style>
 </resources>

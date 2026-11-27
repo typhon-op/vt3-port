@@ -36,6 +36,10 @@ public final class InstallHostTest {
 
         gameRootAccepted(tmp);
         parentWithOneChildAccepted(tmp);
+        nestedRepackAccepted(tmp);
+        tooDeepRefused(tmp);
+        ambiguousAtDepthRefused(tmp);
+        exeThreeLevelsUp(tmp);
         ambiguousParentRefused(tmp);
         missingResourceRefused(tmp);
         unreadableFolderRefused(tmp);
@@ -411,6 +415,74 @@ public final class InstallHostTest {
         File dst = new File(tmp, "links-copy");
         TreeFiles.copy(dir, dst, plain, (b, t) -> seen[0] = b, () -> false);
         check(!new File(dst, "loop").exists(), "a copy does not follow the link either");
+    }
+
+    /* ---- the reported bug: an unpacked repack nested under archive folders ---- */
+
+    /**
+     * Download/<game>/<game>/<game>/data/Resource, with VT3.exe at the top: the layout from the
+     * bug report. Before the bounded descendant search this validated as "no Resource" and left
+     * Install disabled while the screen still quoted the disc image's 4.5 GB.
+     */
+    static void nestedRepackAccepted(File tmp) throws IOException {
+        File top = new File(tmp, "repack");
+        File data = new File(top, "Virtua.Tennis.3/Virtua.Tennis.3/data");
+        Files.createDirectories(new File(data, "Resource").toPath());
+        touch(new File(data, "Resource/court.dat"));
+        touch(new File(top, "VT3.exe"));
+
+        GameFolder.Result r = GameFolder.of(top);
+        check(r.ok(), "a repack whose data sits two levels down is accepted");
+        check("Virtua.Tennis.3/Virtua.Tennis.3/data".equals(r.root),
+                "the data root is the nested folder (" + r.root + ")");
+        check(GameFolder.root(top, r).equals(data), "it resolves to the folder holding Resource");
+        check("VT3.exe".equals(r.exe), "the executable at the top of the archive is found");
+        check(GameFolder.exeNear(data) != null, "exeNear reaches the executable above the data");
+
+        Source s = new Source();
+        s.folder(GameFolder.root(top, r).getAbsolutePath());
+        s.foundExe(GameFolder.exeNear(data).getAbsolutePath());
+        String dest = new File(tmp, "dest-nested").getAbsolutePath();
+        check(InstallPlan.readyToInstall(s, true, dest),
+                "a valid unpacked folder enables Install with no ISO and no separate exe pick");
+        InstallPlan p = InstallPlan.forSource(s, true, dest);
+        check(p != null && p.mode == InstallPlan.Mode.DIRECT, "it is read in place, not copied");
+        check(p != null && p.needFreeBytes == InstallPlan.SLACK,
+                "the space it asks for is the headroom, not the disc image's unpack");
+    }
+
+    /** Three levels is beyond the bounded search: refused, never guessed. */
+    static void tooDeepRefused(File tmp) throws IOException {
+        File top = new File(tmp, "too-deep");
+        File data = new File(top, "a/b/c/data");
+        Files.createDirectories(new File(data, "Resource").toPath());
+        GameFolder.Result r = GameFolder.of(top);
+        check(GameFolder.NO_RESOURCE.equals(r.problem),
+                "a Resource more than two levels down is refused (" + r.problem + ")");
+    }
+
+    /** Two holders at the same depth is ambiguous, and says which ones. */
+    static void ambiguousAtDepthRefused(File tmp) throws IOException {
+        File top = new File(tmp, "ambiguous-nested");
+        Files.createDirectories(new File(top, "release-a/data/Resource").toPath());
+        Files.createDirectories(new File(top, "release-b/data/Resource").toPath());
+        GameFolder.Result r = GameFolder.of(top);
+        check(GameFolder.AMBIGUOUS.equals(r.problem), "two nested data folders are refused");
+        check(r.detail != null && r.detail.contains("release-a") && r.detail.contains("release-b"),
+                "both candidates are named (" + r.detail + ")");
+    }
+
+    /** The executable can sit three archive levels above the data folder, as repacks ship it. */
+    static void exeThreeLevelsUp(File tmp) throws IOException {
+        File top = new File(tmp, "exe-up");
+        File data = new File(top, "Virtua.Tennis.3/Virtua.Tennis.3/data2");
+        Files.createDirectories(new File(data, "Resource").toPath());
+        touch(new File(top, "VT3.exe"));
+        check(GameFolder.exeNear(data) != null, "exeNear finds an executable three levels up");
+        GameFolder.Result r = GameFolder.of(data);
+        check(r.ok(), "picking the data folder itself still validates");
+        check(GameFolder.exeNear(data).getName().equalsIgnoreCase("VT3.exe"),
+                "the executable found above is the game's own");
     }
 
     /* ---- helpers ---- */

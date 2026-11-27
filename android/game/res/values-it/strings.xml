@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Italian interface text; anything not listed falls back to English. -->
+<resources>
+    <string name="menu_main_title">Menu principale</string>
+    <string name="menu_start_game">Gioca</string>
+    <string name="menu_hint_start">Partita</string>
+    <string name="menu_settings">Impostazioni</string>
+    <string name="menu_hint_settings">Grafica, controlli, file</string>
+    <string name="menu_language">Lingua</string>
+    <string name="menu_hint_language">Testi dell\'interfaccia</string>
+    <string name="menu_pad_hint">Croce direzionale \u00b7 naviga      A \u00b7 seleziona</string>
+    <string name="menu_footer">Cartella del gioco: %1$s</string>
+    <string name="menu_not_installed">Il gioco non \u00e8 ancora installato.</string>
+    <string name="language_title">Lingua</string>
+    <string name="language_hint">Lingua di queste schermate: installazione, menu principale, impostazioni e diagnostica.</string>
+    <string name="language_note">I testi e il commento del gioco provengono dal disco installato. L\'edizione europea contiene inglese, francese, tedesco, spagnolo e italiano; il gioco sceglie la lingua l\u00ec.</string>
+    <string name="settings_title">Impostazioni</string>
+    <string name="settings_close">Chiudi</string>
+    <string name="tab_graphics">Grafica e prestazioni</string>
+    <string name="tab_controls">Controlli e audio</string>
+    <string name="tab_advanced">Avanzate</string>
+    <string name="tab_game">File del gioco</string>
+    <string name="tab_driver">Adreno Tools</string>
+    <string name="settings_restart">Applica e avvia il gioco</string>
+    <string name="settings_verify">Verifica i file del gioco</string>
+    <string name="settings_change_source">Cambia cartella o immagine del disco</string>
+</resources>

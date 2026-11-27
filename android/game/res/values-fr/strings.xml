@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- French interface text. The game's own text comes from the disc; these are the launcher's
+     screens. Strings not listed here fall back to English. -->
+<resources>
+    <string name="menu_main_title">Menu principal</string>
+    <string name="menu_start_game">Jouer</string>
+    <string name="menu_hint_start">Partie</string>
+    <string name="menu_settings">R\u00e9glages</string>
+    <string name="menu_hint_settings">Graphismes, commandes, fichiers</string>
+    <string name="menu_language">Langue</string>
+    <string name="menu_hint_language">Textes de l\'interface</string>
+    <string name="menu_pad_hint">Croix directionnelle \u00b7 naviguer      A \u00b7 valider</string>
+    <string name="menu_footer">Dossier du jeu : %1$s</string>
+    <string name="menu_not_installed">Le jeu n\'est pas encore install\u00e9.</string>
+    <string name="language_title">Langue</string>
+    <string name="language_hint">Langue de ces \u00e9crans : installation, menu principal, r\u00e9glages et diagnostics.</string>
+    <string name="language_note">Les textes et commentaires du jeu viennent du disque install\u00e9. L\'\u00e9dition europ\u00e9enne contient l\'anglais, le fran\u00e7ais, l\'allemand, l\'espagnol et l\'italien ; le jeu choisit sa langue l\u00e0-bas.</string>
+    <string name="settings_title">R\u00e9glages</string>
+    <string name="settings_close">Fermer</string>
+    <string name="tab_graphics">Graphismes et performances</string>
+    <string name="tab_controls">Commandes et son</string>
+    <string name="tab_advanced">Avanc\u00e9</string>
+    <string name="tab_game">Fichiers du jeu</string>
+    <string name="tab_driver">Adreno Tools</string>
+    <string name="settings_restart">Appliquer et lancer le jeu</string>
+    <string name="settings_verify">V\u00e9rifier les fichiers du jeu</string>
+    <string name="settings_change_source">Changer de dossier ou d\'image disque</string>
+</resources>

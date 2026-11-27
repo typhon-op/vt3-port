@@ -94,6 +94,13 @@ static int open_stream(vt3_audio *a)
     AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    /* The device-side buffer, sized from the sample rate rather than left to the platform: 20 ms.
+     * That is a few bursts on a phone, enough for the callback to ride out a scheduling delay
+     * while the game thread holds the CPU, and far short of the latency a "bigger buffer" fix
+     * would add. The ring behind it (see MIX_RING_MS) is what absorbs a longer stall. */
+    int32_t capacity = (int32_t)(fmt.sample_rate / 50);
+    if (capacity < 256) capacity = 256;
+    AAudioStreamBuilder_setBufferCapacityInFrames(b, capacity);
     AAudioStreamBuilder_setDataCallback(b, data_callback, a);
     AAudioStreamBuilder_setErrorCallback(b, error_callback, a);
     aaudio_result_t rc = AAudioStreamBuilder_openStream(b, &a->stream);
@@ -112,9 +119,16 @@ static int open_stream(vt3_audio *a)
         a->stream = NULL;
         return -1;
     }
-    VT3_CINFO("audio", "%u Hz, %d ch, S16 (AAudio), ring %zu bytes, device burst %d frames",
+    VT3_CINFO("audio", "%u Hz, %d ch, S16 (AAudio), ring %zu bytes (%u ms), burst %d frames, "
+              "buffer %d frames (%.1f ms), performance mode %d",
               fmt.sample_rate, fmt.channels, vt3_rb_capacity(a->rb),
-              AAudioStream_getFramesPerBurst(a->stream));
+              (unsigned)(vt3_rb_capacity(a->rb) * 1000u /
+                         ((size_t)fmt.sample_rate * a->frame_bytes ?
+                          (size_t)fmt.sample_rate * a->frame_bytes : 1u)),
+              AAudioStream_getFramesPerBurst(a->stream),
+              AAudioStream_getBufferSizeInFrames(a->stream),
+              AAudioStream_getBufferSizeInFrames(a->stream) * 1000.0 / (double)fmt.sample_rate,
+              (int)AAudioStream_getPerformanceMode(a->stream));
     return 0;
 }
 

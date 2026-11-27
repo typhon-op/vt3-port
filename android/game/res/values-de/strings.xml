@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- German interface text; anything not listed falls back to English. -->
+<resources>
+    <string name="menu_main_title">Hauptmen\u00fc</string>
+    <string name="menu_start_game">Spiel starten</string>
+    <string name="menu_hint_start">Spielen</string>
+    <string name="menu_settings">Einstellungen</string>
+    <string name="menu_hint_settings">Grafik, Steuerung, Dateien</string>
+    <string name="menu_language">Sprache</string>
+    <string name="menu_hint_language">Oberfl\u00e4chentexte</string>
+    <string name="menu_pad_hint">Steuerkreuz \u00b7 navigieren      A \u00b7 ausw\u00e4hlen</string>
+    <string name="menu_footer">Spielordner: %1$s</string>
+    <string name="menu_not_installed">Das Spiel ist noch nicht installiert.</string>
+    <string name="language_title">Sprache</string>
+    <string name="language_hint">Sprache dieser Bildschirme: Einrichtung, Hauptmen\u00fc, Einstellungen und Diagnose.</string>
+    <string name="language_note">Texte und Kommentar des Spiels kommen von der installierten Disc. Die europ\u00e4ische Version enth\u00e4lt Englisch, Franz\u00f6sisch, Deutsch, Spanisch und Italienisch; dort w\u00e4hlt das Spiel seine Sprache.</string>
+    <string name="settings_title">Einstellungen</string>
+    <string name="settings_close">Schlie\u00dfen</string>
+    <string name="tab_graphics">Grafik &amp; Leistung</string>
+    <string name="tab_controls">Steuerung &amp; Ton</string>
+    <string name="tab_advanced">Erweitert</string>
+    <string name="tab_game">Spieldateien</string>
+    <string name="tab_driver">Adreno Tools</string>
+    <string name="settings_restart">\u00dcbernehmen und Spiel starten</string>
+    <string name="settings_verify">Spieldateien pr\u00fcfen</string>
+    <string name="settings_change_source">Spielordner oder Disc-Image \u00e4ndern</string>
+</resources>

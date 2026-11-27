@@ -204,6 +204,14 @@
             android:enabled="false"
             android:text="@string/install" />
 
+        <!-- What the chosen source actually needs, from its install plan: nothing for a folder read
+             in place, its own size for a copy, the unpack figure only for a disc image. -->
+        <TextView
+            android:id="@+id/require"
+            style="@style/Vt3Status"
+            android:layout_marginTop="8dp"
+            android:text="@string/require_nothing_chosen" />
+
         <!-- Only shown while an install runs: a multi-GB copy must be stoppable without killing the app. -->
         <Button
             android:id="@+id/cancel_button"
@@ -233,8 +241,8 @@
                 android:layout_height="6dp"
                 android:max="1000"
                 android:progress="0"
-                android:progressTint="@color/vt3_ball"
-                android:progressBackgroundTint="@color/vt3_line"
+                android:progressTint="@color/vt3_orange"
+                android:progressBackgroundTint="@color/vt3_line_light"
                 android:visibility="gone" />
 
             <TextView

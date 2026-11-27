@@ -15,6 +15,9 @@
 /* 1 when the controls are shown and consume touch events. */
 int vt3_touch_enabled(void);
 
+/* Re-reads VT3_TOUCH* after the quick menu changed them, without restarting the game. */
+void vt3_touch_reload(void);
+
 /* One pointer's new state. x, y are in drawable (window) pixels; down is 1 for press, 0 for
  * release. Pointers are identified by the platform's pointer id (a finger keeps its id while
  * down, so a drag stays on the control it started on). */

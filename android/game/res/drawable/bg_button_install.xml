@@ -1,21 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Install: a tennis ball's yellow-green, greyed out until both files are picked. -->
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#550B1730">
+<!-- Install: the orange-red selection bar, greyed out until the plan can run. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#55FFFFFF">
     <item>
         <selector>
             <item android:state_enabled="false">
                 <shape android:shape="rectangle">
                     <solid android:color="@color/vt3_disabled" />
-                    <corners android:radius="12dp" />
+                    <corners android:radius="10dp" />
                 </shape>
             </item>
             <item>
                 <shape android:shape="rectangle">
                     <gradient
                         android:angle="270"
-                        android:startColor="#EEF97E"
-                        android:endColor="@color/vt3_ball_dark" />
-                    <corners android:radius="12dp" />
+                        android:startColor="#F07B3C"
+                        android:centerColor="#E2571F"
+                        android:endColor="#B33A0E" />
+                    <corners android:radius="10dp" />
                 </shape>
             </item>
         </selector>

@@ -47,7 +47,7 @@ import java.util.zip.ZipInputStream;
  * The screen is res/layout/activity_installer.xml: a court banner with the VT3 wordmark, one card
  * per file the player supplies, a storage card, the install button, and a foot strip for progress.
  */
-public class Installer extends Activity {
+public class Installer extends BaseActivity {
     static { System.loadLibrary("vt3install"); }
 
     static native int extractIso(int fd, String outDir);
@@ -63,7 +63,7 @@ public class Installer extends Activity {
     File destDir, sourceDir;
     Button isoButton, zipButton, installButton, cancelButton, storageButton, sourceButton,
             destButton, diagnosticsButton;
-    TextView isoState, exeState, status, storageState, sourceState, destState;
+    TextView isoState, exeState, status, storageState, sourceState, destState, require;
     ProgressBar bar;
     static final Handler ui = new Handler(Looper.getMainLooper());
     /* The install thread outlives the activity (a recreate, or a relaunch from the icon), so it
@@ -81,9 +81,9 @@ public class Installer extends Activity {
         if (new File(root, "install.ok").exists()) {
             File data = installedDataRoot();
             if (data != null && GameFolder.isDataRoot(data)) {
-                DiagLog.i("install", "already installed; starting the game");
+                DiagLog.i("install", "already installed; opening the main menu");
                 DiagLog.i("storage", "all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
-                launch();
+                openMenu();
                 return;
             }
             /* The marker survived but the data behind it did not (a folder moved, a card removed).
@@ -104,6 +104,7 @@ public class Installer extends Activity {
         sourceButton = findViewById(R.id.source_button);
         destButton = findViewById(R.id.dest_button);
         diagnosticsButton = findViewById(R.id.diagnostics_button);
+        require = findViewById(R.id.require);
         storageState = findViewById(R.id.storage_state);
         sourceState = findViewById(R.id.source_state);
         destState = findViewById(R.id.dest_state);
@@ -294,7 +295,27 @@ public class Installer extends Activity {
         if (!source.hasExe() && (source.folder != null || source.treeUri != null))
             exeState.setText(R.string.exe_needed);
         destState.setText(destDir == null ? getString(R.string.dest_default) : destDir.getAbsolutePath());
+        if (require != null) require.setText(requirementText());
         installButton.setEnabled(canInstall());
+    }
+
+    /**
+     * What the install the screen is showing will need, in words, from its plan: reading a folder
+     * in place needs no copy at all, a read-only folder needs its own size, and only the disc image
+     * path needs the ~5 GB unpack. The old screen printed the unpack figure whatever was chosen,
+     * which is what made a valid unpacked folder look like it wanted an ISO.
+     */
+    String requirementText() {
+        InstallPlan plan = screenPlan();
+        if (plan == null) return getString(R.string.require_nothing_chosen);
+        switch (plan.mode) {
+            case DIRECT:
+                return getString(R.string.require_direct);
+            case COPY_FOLDER:
+                return getString(R.string.require_copy, mb(plan.needFreeBytes));
+            default:
+                return getString(R.string.require_unpack, mb(plan.needFreeBytes));
+        }
     }
 
     /** The button follows the plan the current choice would run, not the ISO/EXE steps. */
@@ -573,7 +594,7 @@ public class Installer extends Activity {
                 busy = false;
                 showCancel(false);
                 Installer a = live;
-                if (a != null) a.launch();
+                if (a != null) a.openMenu();
             });
         } catch (Throwable e) { /* an Error (OutOfMemoryError) must not kill the thread silently */
             /* A half-copied tree must not survive: the next launch would read a mix of two sources. */
@@ -663,16 +684,7 @@ public class Installer extends Activity {
 
     /** The data root an installed game reads, from the marker or the default. */
     File installedDataRoot() {
-        File marker = new File(root, "game_root");
-        if (marker.isFile()) {
-            try (InputStream in = new FileInputStream(marker)) {
-                String path = new String(readAll(in)).trim();
-                if (!path.isEmpty()) return new File(path);
-            } catch (IOException | RuntimeException e) {
-                DiagLog.w("install", "cannot read " + marker + ": " + e);
-            }
-        }
-        return new File(root, "data2");
+        return Game.dataRoot(this);
     }
 
     /* VT3.exe may be picked bare or inside a zip, or found in the game folder itself. */
@@ -709,35 +721,9 @@ public class Installer extends Activity {
         if (!tmp.renameTo(new File(root, "image.bin"))) throw new IOException("Could not write image.bin.");
     }
 
-    /* Through a .tmp and a rename, so a full disk never leaves a truncated dst. */
-    void copyAsset(String name, File dst) throws IOException {
-        File tmp = new File(dst.getPath() + ".tmp");
-        try (InputStream in = getAssets().open(name); FileOutputStream o = new FileOutputStream(tmp)) {
-            byte[] b = new byte[TreeFiles.CHUNK];
-            for (int n; (n = in.read(b)) > 0; ) o.write(b, 0, n);
-            o.getFD().sync();
-        }
-        if (!tmp.renameTo(dst)) throw new IOException("Could not write " + dst.getName());
-    }
-
-    void launch() {
-        DiagLog.i("app", "launching the game");
-        /* An update can ship a new shader pack (it is keyed to the shader translator), so refresh it. */
-        try {
-            long stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
-            File mark = new File(root, "shaders.stamp");
-            String want = Long.toString(stamp);
-            if (!mark.exists() || !want.equals(new String(readAll(new FileInputStream(mark))))) {
-                copyAsset("shaders.pack", new File(root, "shaders.pack"));
-                try (OutputStream o = new FileOutputStream(mark)) { o.write(want.getBytes()); }
-            }
-        } catch (Exception ignored) {
-        }
-        /* Resolve the graphics ladder (device tier, preset, per-option overrides, thermal rung)
-         * into the markers the renderer reads, and keep the thermal status current while it runs. */
-        GraphicsProfile.apply(this, root);
-        ThermalWatch.start(this);
-        startActivity(new Intent(this, NativeActivity.class));
+    /** Setup is done: the main menu, which owns Start Game / Settings / Language. */
+    void openMenu() {
+        startActivity(new Intent(this, MainMenu.class));
         finish();
     }
 

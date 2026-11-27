@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The step number's badge: the red disc of the VT3 icon's tile. -->
+<!-- The step number's badge: the selection bar's orange, shrunk to a disc. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="@color/vt3_red" />
+    <gradient android:angle="270" android:startColor="#F07B3C" android:endColor="#B33A0E" />
 </shape>

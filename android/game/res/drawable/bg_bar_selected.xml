@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The selected menu bar: the game's orange-red highlight, same angled shape as bg_bar, with a
+     gold sheen along the top and a deeper red under it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="56dp"
+    android:viewportWidth="320"
+    android:viewportHeight="56">
+    <path android:pathData="M6,3 L316,3 L308,53 L0,53 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="0" android:endY="56"
+                android:startColor="#F07B3C"
+                android:centerColor="#E2571F"
+                android:endColor="#B33A0E" />
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M6,3 L316,3"
+        android:strokeColor="#F0C878"
+        android:strokeWidth="1.6" />
+    <path
+        android:pathData="M0,53 L308,53"
+        android:strokeColor="#8C2A06"
+        android:strokeWidth="1.2" />
+</vector>

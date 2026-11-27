@@ -9,15 +9,21 @@ import java.util.List;
  * What counts as an unpacked Virtua Tennis 3 folder, and where inside a picked folder the data root
  * really is.
  *
- * Two folder levels are accepted, because a PC install root and the data folder under it are both
- * natural things to pick:
+ * The picked folder can be the data root itself, one of its parents, or an archive folder a
+ * repack nested it under, because all three are natural things to pick:
  *
- *   <picked>/Resource              -> the picked folder is the data root
- *   <picked>/<one child>/Resource  -> that single child is the data root (e.g. data1/../data2)
+ *   <picked>/Resource                        -> the picked folder is the data root
+ *   <picked>/<child>/Resource                -> that child is the data root (data1/../data2)
+ *   <picked>/<a>/<b>/data/Resource           -> that data folder is the data root (a repack)
+ *
+ * The deeper search is bounded (three levels) and only accepts an unambiguous answer: exactly one
+ * folder at the shallowest depth that holds Resource. The reported bug -- a folder that displayed
+ * its path yet left Install disabled -- was a repack whose data sat one level deeper than the
+ * single-child rule looked, so the folder validated as "no Resource" and nothing could install.
  *
  * Names are matched case-insensitively, like the runtime resolves them (the original data was
- * written for a case-insensitive filesystem). More than one child holding a Resource folder is
- * refused instead of guessed, so a pick that would copy the wrong tree fails immediately.
+ * written for a case-insensitive filesystem). More than one holder at that depth is refused
+ * instead of guessed, so a pick that would copy the wrong tree fails immediately.
  *
  * Pure Java with no Android imports: the same code runs on the phone and in the host test
  * (tools/installtest/InstallHostTest.java), so the picker routes cannot drift apart again.
@@ -119,32 +125,54 @@ final class GameFolder {
         if (res != null && l.isDir("", res))
             return new Result("", res, name(top, EXE), "", null, null);
 
-        List<String> hits = new ArrayList<>();
+        /* Breadth-first over the folder's descendants, one level at a time, stopping at the first
+         * depth that holds any Resource folder. A hit at a shallower depth always wins, so a
+         * sibling "backup" tree deeper down can never be mistaken for the game. */
+        List<String> level = new ArrayList<>();
         for (String child : sorted(top)) {
             if (child.isEmpty() || child.equals(".") || child.equals("..")) continue;
-            if (!l.isDir("", child)) continue;
-            String[] inside;
-            try {
-                inside = l.names(child);
-            } catch (Throwable e) {
-                inside = null;
-            }
-            String r = name(inside, RESOURCE);
-            if (r != null && l.isDir(child, r)) hits.add(child);
+            if (l.isDir("", child)) level.add(child);
         }
-        if (hits.size() == 1) {
-            String child = hits.get(0);
-            String r = name(l.names(child), RESOURCE);
-            String exe = name(top, EXE);
-            String where = "";
-            if (exe == null) {
-                exe = name(l.names(child), EXE);
-                where = child;
+        for (int depth = 0; depth < DEPTH && !level.isEmpty(); depth++) {
+            List<String> hits = new ArrayList<>();
+            for (String path : level) {
+                String[] inside;
+                try {
+                    inside = l.names(path);
+                } catch (Throwable e) {
+                    inside = null;
+                }
+                String r = name(inside, RESOURCE);
+                if (r != null && l.isDir(path, r)) hits.add(path);
             }
-            return new Result(child, r, exe, where, null, null);
+            if (hits.size() == 1) {
+                String child = hits.get(0);
+                String r = name(l.names(child), RESOURCE);
+                String exe = name(top, EXE);
+                String where = "";
+                if (exe == null) {
+                    exe = name(l.names(child), EXE);
+                    where = child;
+                }
+                return new Result(child, r, exe, where, null, null);
+            }
+            if (hits.size() > 1) return new Result("", null, null, "", AMBIGUOUS, joinNames(hits));
+            List<String> next = new ArrayList<>();
+            for (String path : level) {
+                String[] inside;
+                try {
+                    inside = l.names(path);
+                } catch (Throwable e) {
+                    inside = null;
+                }
+                for (String child : sorted(inside)) {
+                    if (child.equalsIgnoreCase(RESOURCE)) continue; /* game data, not a container */
+                    if (l.isDir(path, child)) next.add(path + "/" + child);
+                }
+            }
+            level = next;
         }
-        if (hits.isEmpty()) return new Result("", null, null, "", NO_RESOURCE, null);
-        return new Result("", null, null, "", AMBIGUOUS, joinNames(hits));
+        return new Result("", null, null, "", NO_RESOURCE, null);
     }
 
     /** The data root for a result, relative to the folder that was picked. */
@@ -163,8 +191,13 @@ final class GameFolder {
     /* Where a VT3.exe is still looked for around a data root: in its first subfolders (an extracted
      * repack keeps the exe in a bin/ beside the data), and at the top of the archive levels above
      * it (a release nested as Download/<game>/<game>/<game>/data). Beyond that the player picks it. */
-    static final int EXE_DOWN = 2;
+    static final int EXE_DOWN = 3;
     static final int EXE_UP = 3;
+    /**
+     * How deep below the picked folder a Resource folder is looked for (see {@link #resolve}).
+     * Three covers Download/<game>/<game>/<game>/data/Resource, the layout from the bug report.
+     */
+    static final int DEPTH = 3;
 
     /**
      * A VT3.exe that belongs to this data root, or null. Limiting the search to the data root and

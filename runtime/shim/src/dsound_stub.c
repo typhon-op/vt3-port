@@ -88,7 +88,7 @@ typedef struct ds_buffer {
  * is the same race a real sound card has with the game's write cursor. */
 #define MIX_RATE 48000u
 #define MIX_CH 2u
-#define MIX_RING_MS 40u
+#define MIX_RING_MS 96u
 #define MIX_MAX_FRAMES 960u
 #define MIX_MAX_ACTIVE 64
 #define FRESH_BLOCK VT3_MIX_FRESH_BLOCK
@@ -103,6 +103,8 @@ static uint64_t g_mix_next_ns;
 static uint64_t g_pause_ns;      /* when the platform paused the output, or 0: the timeline is frozen */
 static size_t g_ring_bytes;      /* trace: output ring size, to report its fill */
 static uint32_t g_resyncs;       /* trace: wall-clock resyncs of the mixer timeline */
+static uint64_t g_starved_frames; /* trace: frames the device ring had no room for */
+static uint32_t g_starved_ticks;  /* trace: ticks where the ring was full while audio was due */
 
 /* Buffers whose Release arrived while the mixer had them pinned. The mixer frees them after
  * the chunk it is mixing, so a guest Release never waits for the DSP pass. */
@@ -633,13 +635,22 @@ static void *mix_thread(void *arg)
             pthread_mutex_unlock(&g_mu);
             continue;
         }
-        if (now > g_mix_next_ns + 50000000u) {
+        /* A late tick is not a reason to throw audio away. The ring is the buffer that absorbs a
+         * starved thread; only a gap far longer than the ring itself means the timeline really
+         * has to be re-anchored, and then it is counted so the trace says why a skip was heard.
+         * (This was 50 ms, which is shorter than the old 40 ms ring plus one scheduling delay:
+         * a single missed tick could cut a chunk out of the music -- the stutter this fixes.) */
+        if (now > g_mix_next_ns + 250000000u) {
             g_mix_next_ns = now - 10000000u;
-            g_resyncs++;                              /* more than 50 ms behind the read timeline: resync */
+            g_resyncs++;                              /* more than 250 ms behind: resync, and count */
         }
         uint64_t due = now > g_mix_next_ns ? (now - g_mix_next_ns) * MIX_RATE / 1000000000u : 0;
         uint64_t space = out_dev ? vt3_audio_space(out_dev) / (MIX_CH * sizeof(int16_t)) : 0;
         frames = (uint32_t)(due < space ? due : space);
+        if (due > frames) {
+            g_starved_frames += due - frames;
+            if (frames == 0) g_starved_ticks++;
+        }
         if (frames > MIX_MAX_FRAMES) frames = MIX_MAX_FRAMES;
         if (frames > 0) {
             /* Downward, so a buffer that stops and is removed does not skip the one moved into
@@ -653,8 +664,19 @@ static void *mix_thread(void *arg)
         if (frames > 0) {
             memset(acc, 0, (size_t)frames * MIX_CH * sizeof acc[0]);
             for (int k = 0; k < njobs; k++) job_render(&jobs[k], acc, frames);
+            /* Master volume and mute, from the settings markers (VT3_AUDIO_VOLUME / _MUTE, read
+             * once by the mixer). 100 % is bit-identical to the mixed output. */
+            static int gain = -1;
+            if (gain < 0) {
+                const char *m = getenv("VT3_AUDIO_MUTE");
+                const char *v = getenv("VT3_AUDIO_VOLUME");
+                gain = (m && atoi(m)) ? 0 : (v ? atoi(v) : 100);
+                if (gain < 0) gain = 0;
+                if (gain > 100) gain = 100;
+            }
             for (size_t k = 0; k < (size_t)frames * MIX_CH; k++) {
                 int32_t v = acc[k];
+                if (gain != 100) v = v * gain / 100;
                 out[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
                 if (v > peak) peak = v;
                 if (-v > peak) peak = -v;
@@ -731,6 +753,13 @@ static void *mix_thread(void *arg)
                          (unsigned)(out_dev ? vt3_audio_starved(out_dev) : 0u),
                          (unsigned long long)used_ms, (long long)gap_ms, g_resyncs,
                          (unsigned long long)(now / 1000000u % 100000u));
+                /* The two numbers that explain a stutter: frames the ring had no room for, and
+                 * ticks where it was completely full. Non-zero here with clean underruns means
+                 * the mixer is outrunning the device, not the other way round. */
+                VT3_INFO("audio: ring-full drops %llu frames over %u ticks",
+                         (unsigned long long)g_starved_frames, g_starved_ticks);
+                g_starved_frames = 0;
+                g_starved_ticks = 0;
                 VT3_INFO("audio: guest lock: %u takes, avg %llu us, max %llu us; writer skipped %u regions (%u ms)",
                          takes, (unsigned long long)avg_lock_us, (unsigned long long)max_lock_us,
                          skips, skip_ms);
