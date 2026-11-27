@@ -165,6 +165,9 @@ typedef struct vt3_gfx_ops {
 
 int  vt3_gfx_init(const vt3_gfx_ops *ops, const vt3_gfx_config *cfg);
 void vt3_gfx_shutdown(void);
+
+/* Drops the settings the renderer read once at start-up (the frame cap), for a relaunch. */
+void vt3_gfx_forget_cached_settings(void);
 int  vt3_gfx_tex_create(vt3_tex *out, int w, int h, vt3_texfmt fmt);
 void vt3_gfx_tex_upload(vt3_tex t, const void *pixels, int pitch, int w, int h);
 void vt3_gfx_tex_destroy(vt3_tex t);

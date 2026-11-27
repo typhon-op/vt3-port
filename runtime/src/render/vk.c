@@ -539,19 +539,27 @@ static uint16_t declared_samplers(const char *text)
  * to the panel's 120 Hz, and sleeping to a 120 budget on top of it missed vsync slots (Retroid,
  * rotated pairs: 120.0 fps median against 97-105 with the 120 cap). VT3_FPS_CAP overrides, 0 turns
  * the limit off; the launcher's "60 Hz battery saver" shortcut sets it to 60. */
+static int g_fps_cap_hz = -1;
+
+/* A new match in the same process must see a changed VT3_FPS_CAP, so the cached value is dropped. */
+void vt3_gfx_forget_cached_settings(void)
+{
+    g_fps_cap_hz = -1;
+}
+
 static int fps_cap_hz(void)
 {
-    static int hz = -1;
-    if (hz < 0) {
+    int *hz = &g_fps_cap_hz;
+    if (*hz < 0) {
         const char *cap = getenv("VT3_FPS_CAP");
 #ifdef __ANDROID__
-        hz = cap ? atoi(cap) : 0;
+        *hz = cap ? atoi(cap) : 0;
 #else
-        hz = cap ? atoi(cap) : 60;
+        *hz = cap ? atoi(cap) : 60;
 #endif
-        if (hz < 0) hz = 0;
+        if (*hz < 0) *hz = 0;
     }
-    return hz;
+    return *hz;
 }
 
 static int create_swapchain(void)

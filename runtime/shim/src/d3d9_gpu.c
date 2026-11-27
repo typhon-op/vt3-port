@@ -252,6 +252,18 @@ int d3d9_gpu_init(uint32_t width, uint32_t height)
     return 0;
 }
 
+/* Releases the renderer and everything it cached, so the next match in this process starts as if
+ * the app had just launched. */
+void d3d9_gpu_shutdown(void)
+{
+    if (g_gpu_ok) {
+        vt3_gfx_shutdown();
+        g_gpu_ok = 0;
+    }
+    vt3_gfx_forget_cached_settings();
+    g_plat_ok = 0;
+}
+
 int d3d9_gpu_ok(void)
 {
     return g_gpu_ok;

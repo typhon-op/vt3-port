@@ -638,6 +638,12 @@ void vt3_menu_set_open(int open)
 
 /* ---- setup and frame accounting ------------------------------------------------------ */
 
+/* Fresh state for the next match in this process: nothing carried over from the last one. */
+void vt3_menu_reset(void)
+{
+    memset(&g, 0, sizeof g);
+}
+
 void vt3_menu_init(void)
 {
     if (!g.inited) {

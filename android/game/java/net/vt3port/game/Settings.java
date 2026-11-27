@@ -200,6 +200,9 @@ public class Settings extends BaseActivity {
         content.addView(Ui.row(this, getString(R.string.settings_fps),
                 getString(R.string.settings_fps_hint), fps));
         content.addView(Ui.note(this, getString(R.string.settings_pacing_note)));
+        content.addView(Ui.note(this, "Frame limit, resolution, render scale, anisotropy, shadows and "
+                + "widescreen are read when a match starts: a change applies to the next match, "
+                + "including one started after returning to the main menu."));
 
         content.addView(Ui.section(this, getString(R.string.settings_overlay)));
         content.addView(toggleRow(getString(R.string.settings_overlay_on),
@@ -325,6 +328,8 @@ public class Settings extends BaseActivity {
                 v -> startActivity(new Intent(this, TouchControls.class))));
         content.addView(Ui.button(this, getString(R.string.settings_controls_guide),
                 v -> controlsGuide()));
+        content.addView(Ui.note(this, "Control size and opacity are read when a match starts and apply "
+                + "to the next one; the layout, profiles and the swipe pad are applied live."));
         content.addView(Ui.note(this, getString(R.string.settings_controls_note)));
 
         content.addView(Ui.section(this, getString(R.string.settings_sound)));

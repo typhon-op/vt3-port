@@ -13,6 +13,9 @@
  * VT3_SETTINGS_DIR. Safe to call more than once; later calls only refresh the overlay flags. */
 void vt3_menu_init(void);
 
+/* Forgets the menu and overlay state, for a match started after returning to the main menu. */
+void vt3_menu_reset(void);
+
 /* One presented frame: updates the frame-rate estimate the overlay shows. */
 void vt3_menu_tick(void);
 

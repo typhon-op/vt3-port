@@ -99,6 +99,15 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static ds_buffer *g_active[MIX_MAX_ACTIVE];
 static int g_nactive;
 static vt3_audio *g_out;
+
+/* Closes the output so a relaunch opens its own stream instead of two writers sharing one. */
+void vt3_dsound_shutdown(void)
+{
+    if (!g_out) return;
+    vt3_audio_pause(1);
+    vt3_audio_close(g_out);
+    g_out = NULL;
+}
 static uint64_t g_mix_next_ns;
 static uint64_t g_pause_ns;      /* when the platform paused the output, or 0: the timeline is frozen */
 static size_t g_ring_bytes;      /* trace: output ring size, to report its fill */

@@ -35,6 +35,13 @@ public class MainMenu extends BaseActivity {
     TextView footer;
     View startBar;
 
+    /** The one action that ends the app on purpose: leaving a match never does this. */
+    void quit() {
+        DiagLog.i("app", "quit from the main menu");
+        finishAffinity();
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -91,6 +98,8 @@ public class MainMenu extends BaseActivity {
         addBar(block, Ui.menuBar(this, getString(R.string.menu_settings),
                 getString(R.string.menu_hint_settings),
                 v -> startActivity(new Intent(this, Settings.class))));
+        addBar(block, Ui.menuBar(this, "Quit", "Close the app completely",
+                v -> quit()));
         addBar(block, Ui.menuBar(this, getString(R.string.menu_language),
                 getString(R.string.menu_hint_language),
                 v -> startActivity(new Intent(this, LanguageSelect.class))));

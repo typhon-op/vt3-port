@@ -26,6 +26,7 @@
 
 #include <stdatomic.h>
 #include <string.h>
+#include <pthread.h>
 #include <time.h>
 
 /* Defined in src/input/input_android.c */
@@ -173,22 +174,39 @@ int vt3_platform_android_input(struct android_app *app, AInputEvent *e)
  * so the Java main menu is what the player sees. Nothing calls exit(), so the application keeps
  * running and a new match starts from the menu.
  */
+void vt3_dsound_shutdown(void);
+void d3d9_gpu_shutdown(void);
+void vt3_input_init(void);
+void vt3_input_clear_keys(void);
+
+/* Everything a launch initialises, in reverse: the renderer and the audio stream are closed, the
+ * menu and the touch overlay forget their state, input is zeroed. The next match in this process
+ * then starts from the same state a fresh launch does, instead of inheriting this one's. */
+static void reset_runtime_for_relaunch(void)
+{
+    vt3_menu_set_open(0);
+    vt3_touch_release_all();
+    vt3_touch_reset();
+    vt3_menu_reset();
+    vt3_input_init();
+    vt3_input_clear_keys();
+    d3d9_gpu_shutdown();
+    vt3_dsound_shutdown();
+    VT3_CINFO("app", "runtime reset for a new match (renderer, audio, menu, touch, input)");
+}
+
 void vt3_platform_request_main_menu(void)
 {
     VT3_CINFO("app", "leaving the match for the Android main menu (process stays alive)");
-    vt3_menu_set_open(0);
-    vt3_touch_release_all();
-    vt3_audio_pause(1);
+    reset_runtime_for_relaunch();
     vt3_android_open_main_menu();
     if (g_app && g_app->activity) {
         ANativeActivity_finish(g_app->activity);
     }
-    /* Park this thread rather than unwinding the translated game: the guest's stack is deep inside
-     * its own flow and a return through it would run teardown code that assumes a live window. */
-    for (;;) {
-        struct timespec ts = { 1, 0 };
-        nanosleep(&ts, NULL);
-    }
+    /* End this thread rather than unwinding the translated game: the guest's stack is deep inside
+     * its own flow and a return through it would run teardown that assumes a live window. The state
+     * it owned is already released above, so the next match gets a clean runtime. */
+    pthread_exit(NULL);
 }
 
 void vt3_platform_android_attach(struct android_app *app)

@@ -188,8 +188,27 @@ static void apply_game_root(void)
     setenv("VT3_GAME_ROOT", VT3_ANDROID_ROOT "/data2", 1);
 }
 
+/* Counts launches in this process. The marker-derived VT3_* variables survive a match (they were
+ * set with overwrite 0), so on a relaunch they are dropped and re-applied: a setting changed in the
+ * menu between matches takes effect in the next one. */
+static int g_launch;
+
+static void forget_marker_env(void)
+{
+    static const char *names[] = {
+        "VT3_FPS_CAP", "VT3_RENDER_HEIGHT", "VT3_ANISO", "VT3_RENDER_SCALE",
+        "VT3_NO_VSM", "VT3_NO_WIDESCREEN", "VT3_PERF_OVERLAY", "VT3_PERF_OVERLAY_FULL",
+        "VT3_TOUCH", "VT3_TOUCH_FORCE", "VT3_TOUCH_SCALE", "VT3_TOUCH_ALPHA", "VT3_TOUCH_COLOR",
+        "VT3_AUDIO_VOLUME", "VT3_AUDIO_MUTE", "VT3_TRACE_AUDIO", "VT3_TRACE_FPS",
+        "VT3_GAME_ROOT", "VT3_SHADER_PACK"
+    };
+    for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++) unsetenv(names[i]);
+    VT3_CINFO("app", "relaunch: re-reading the settings markers");
+}
+
 void android_main(struct android_app *app)
 {
+    if (g_launch++ > 0) forget_marker_env();
 #ifdef VT3_PGO_GEN
     pthread_t pgo;
     pthread_create(&pgo, NULL, pgo_dump, NULL);

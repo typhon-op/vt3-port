@@ -98,6 +98,8 @@ static struct {
     int      shadow;
 } g;
 
+static void release_state(void);   /* defined with the input plumbing below */
+
 /* ---- small helpers -------------------------------------------------------- */
 
 #define VT3_PI 3.14159265358979323846f
@@ -311,6 +313,27 @@ static void read_env(void)
     load_config();
     if (g.enabled) VT3_INFO("touch: on-screen controls enabled (scale %.2f, alpha %.2f, colour %d)",
                             g.user_scale, g.alpha, g.color);
+}
+
+/* Fresh state for the next match in this process. The saved layout is re-read by reload(). */
+void vt3_touch_reset(void)
+{
+    release_state();
+    vt3_swipe_reset(&g.swipe);
+    memset(&g.ptr, 0, sizeof g.ptr);
+    g.inited = 0;
+    g.have_view = 0;
+    g.logical_w = g.logical_h = 0;
+    g.draws_at = 0;
+    g.draws_max = 0;
+    g.guest_menu = 0;
+    memset(g.draws_ring, 0, sizeof g.draws_ring);
+    free(g.v);
+    g.v = NULL;
+    g.vcap = g.vn = 0;
+    memset(&g.mode, 0, sizeof g.mode);
+    g.mode.mode = VT3_TOUCH_ANALOG;
+    g.rep.dir = VT3_DPAD_NONE;
 }
 
 void vt3_touch_reload(void)
