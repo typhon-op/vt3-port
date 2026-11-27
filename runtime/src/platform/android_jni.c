@@ -19,6 +19,7 @@ static jclass g_bridge;
 static jmethodID g_open_settings;
 static jmethodID g_open_touch;
 static jmethodID g_screen_open;
+static jmethodID g_open_menu;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -55,10 +56,28 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
         if (g_bridge)
             g_screen_open = (*env)->GetStaticMethodID(env, g_bridge, "screenOpen", "()Z");
         if (!g_screen_open) (*env)->ExceptionClear(env);
+        if (g_bridge)
+            g_open_menu = (*env)->GetStaticMethodID(env, g_bridge, "openMainMenu", "()V");
+        if (!g_open_menu) (*env)->ExceptionClear(env);
     } else {
         (*env)->ExceptionClear(env);
     }
     return JNI_VERSION_1_6;
+}
+
+/* Shows the port's main menu. Used when the guest (or the pause menu) exits a match. */
+void vt3_android_open_main_menu(void)
+{
+    if (!g_vm || !g_bridge || !g_open_menu) return;
+    JNIEnv *env = NULL;
+    jint rc = (*g_vm)->GetEnv(g_vm, (void **)&env, JNI_VERSION_1_6);
+    if (rc == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK || !env) return;
+    } else if (rc != JNI_OK || !env) {
+        return;
+    }
+    (*env)->CallStaticVoidMethod(env, g_bridge, g_open_menu);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
 }
 
 /* 1 while one of the app's own screens (settings, the touch editor, the preview) is started. The

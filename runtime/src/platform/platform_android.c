@@ -16,7 +16,9 @@
 #include "vt3/vt3_audio.h"
 #include "vt3/vt3_diag.h"
 #include "vt3/vt3_log.h"
+#include "vt3/vt3_menu.h"
 #include "vt3/vt3_platform.h"
+#include "vt3/vt3_touch.h"
 
 #include <android/log.h>
 #include <android/native_window.h>
@@ -30,6 +32,7 @@
 int vt3_input_android_event(const AInputEvent *e);
 /* Defined in src/ui/touch_controls.c */
 void vt3_touch_release_all(void);
+void vt3_android_open_main_menu(void);
 
 #define EVENT_QUEUE 32
 /* How long vt3_platform_init waits for the first surface before it gives up and reports. A cold
@@ -162,6 +165,30 @@ int vt3_platform_android_input(struct android_app *app, AInputEvent *e)
 {
     (void)app;
     return vt3_input_android_event(e);
+}
+
+/*
+ * Exit to the port's main menu without ending the process. The guest thread is parked here: the
+ * match stops at this point, held input is released, audio is silenced, and the activity finishes
+ * so the Java main menu is what the player sees. Nothing calls exit(), so the application keeps
+ * running and a new match starts from the menu.
+ */
+void vt3_platform_request_main_menu(void)
+{
+    VT3_CINFO("app", "leaving the match for the Android main menu (process stays alive)");
+    vt3_menu_set_open(0);
+    vt3_touch_release_all();
+    vt3_audio_pause(1);
+    vt3_android_open_main_menu();
+    if (g_app && g_app->activity) {
+        ANativeActivity_finish(g_app->activity);
+    }
+    /* Park this thread rather than unwinding the translated game: the guest's stack is deep inside
+     * its own flow and a return through it would run teardown code that assumes a live window. */
+    for (;;) {
+        struct timespec ts = { 1, 0 };
+        nanosleep(&ts, NULL);
+    }
 }
 
 void vt3_platform_android_attach(struct android_app *app)

@@ -34,8 +34,8 @@ final class TouchConfig {
     static final String[] LAYOUT_NAMES = { "Standard", "Compact", "Swipe", "Custom 1", "Custom 2" };
     static final String[] PROFILE_IDS = { "default", "classic", "floating", "dynamic", "custom1", "custom2" };
     static final String[] PROFILE_NAMES = { "Default", "Classic", "Floating", "Dynamic", "Custom 1", "Custom 2" };
-    static final String[] CTL_IDS = { "stick", "a", "b", "x", "y", "lb", "rb", "select", "start", "swipe" };
-    static final String[] CTL_NAMES = { "Left stick", "A", "B", "X", "Y", "LB", "RB", "Select", "Start", "One-Button Swipe" };
+    static final String[] CTL_IDS = { "stick", "a", "b", "x", "y", "lb", "rb", "select", "start", "swipe", "menu" };
+    static final String[] CTL_NAMES = { "Left stick", "A", "B", "X", "Y", "LB", "RB", "Select", "Start", "One-Button Swipe", "Menu button" };
     static final String[] DIRS = { "up", "down", "left", "right" };
 
     final LinkedHashMap<String, String> v = new LinkedHashMap<>();

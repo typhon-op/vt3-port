@@ -20,6 +20,7 @@ enum {
     VT3_TC_LB, VT3_TC_RB,
     VT3_TC_SELECT, VT3_TC_START,
     VT3_TC_SWIPE,
+    VT3_TC_MENU,
     VT3_TC_COUNT
 };
 

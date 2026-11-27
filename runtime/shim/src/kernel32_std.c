@@ -6,6 +6,7 @@
  * code that reads the fields sees the values it expects.
  */
 #include "shim_internal.h"
+#include "vt3/vt3_log.h"
 #include "vt3/vt3_guest.h"
 #include "win32/kernel32.h"
 
@@ -59,9 +60,17 @@ HANDLE WINAPI GetStdHandle(DWORD n)
     return std_handles[idx];
 }
 
+/* On Android the platform layer provides this: it shows the port's main menu and parks the guest
+ * thread, so the game's own Exit does not take the process down. Desktop builds keep exit(). */
+extern void vt3_platform_request_main_menu(void) __attribute__((weak));
+
 void WINAPI ExitProcess(UINT code)
 {
     fflush(stdout);
+    if (vt3_platform_request_main_menu) {
+        VT3_CINFO("app", "guest called ExitProcess(%u): returning to the main menu", code);
+        vt3_platform_request_main_menu();    /* does not return */
+    }
     exit((int)code);
 }
 

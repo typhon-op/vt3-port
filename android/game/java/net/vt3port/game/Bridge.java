@@ -32,6 +32,22 @@ public final class Bridge {
         app = c.getApplicationContext();
     }
 
+    /**
+     * Called from android_jni.c (cached as net/vt3port/game/Bridge.openMainMenu) when a match ends:
+     * the guest thread is parked, the game activity finishes, and this brings the port's menu up.
+     */
+    static void openMainMenu() {
+        Context c = app;
+        if (c == null) return;
+        try {
+            Intent i = new Intent(c, MainMenu.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            c.startActivity(i);
+        } catch (RuntimeException e) {
+            DiagLog.w("app", "could not open the main menu: " + e.getMessage());
+        }
+    }
+
     /** Called from android_jni.c (cached as net/vt3port/game/Bridge.openTouchSettings). */
     static void openTouchSettings() {
         Context c = app;

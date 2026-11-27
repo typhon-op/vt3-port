@@ -217,6 +217,19 @@ public class Settings extends BaseActivity {
         content.addView(Ui.row(this, getString(R.string.settings_overlay_size),
                 getString(R.string.settings_overlay_size_hint), overlay));
 
+        /* Where the overlay sits. The runtime reads overlay_pos once a second, so it moves without a
+         * restart; the corners are the four places the touch controls never occupy. */
+        String[] corners = { "Top left", "Top right", "Bottom left", "Bottom right" };
+        final int[] corner = { Markers.intOr(root, "overlay_pos", 0) };
+        if (corner[0] < 0 || corner[0] > 3) corner[0] = 0;
+        Ui.Choice where = new Ui.Choice(this, corners, corner[0], () -> {});
+        where.setOnClickListener(v -> {
+            where.step(1);
+            Markers.writeInt(root, "overlay_pos", where.index);
+        });
+        content.addView(Ui.row(this, "Overlay position",
+                "Keeps the overlay clear of the on-screen controls", where));
+
         content.addView(Ui.section(this, getString(R.string.settings_thermal)));
         content.addView(toggleRow(getString(R.string.settings_thermal_guard),
                 getString(R.string.settings_thermal_guard_hint),

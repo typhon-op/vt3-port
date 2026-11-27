@@ -12,7 +12,7 @@
 #include <string.h>
 
 static const char *const CTL_NAME[VT3_TC_COUNT] = {
-    "stick", "a", "b", "x", "y", "lb", "rb", "select", "start", "swipe"
+    "stick", "a", "b", "x", "y", "lb", "rb", "select", "start", "swipe", "menu"
 };
 static const char *const LAYOUT_NAME[VT3_LAYOUT_COUNT] = {
     "standard", "compact", "swipe", "custom1", "custom2"

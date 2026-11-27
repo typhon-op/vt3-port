@@ -394,6 +394,12 @@ static void layout(void)
             q->cy = c && c->y >= 0.0f ? c->y * H : H - 78.0f * s;
             break;
         }
+        case VT3_TC_MENU:
+            q->w = 130.0f * s * size;
+            q->h = 54.0f * s * size;
+            q->cx = c && c->x >= 0.0f ? c->x * W : W * 0.5f;
+            q->cy = c && c->y >= 0.0f ? c->y * H : 30.0f * s + q->h * 0.5f;
+            break;
         case VT3_TC_SWIPE:
             q->r = 110.0f * s * size;
             q->cx = c && c->x >= 0.0f ? c->x * W : W * 0.5f;
@@ -447,6 +453,15 @@ static int candidates_at(float x, float y, int *cand, float *dist)
         if (in_rect(x, y, q->cx - q->w * 0.5f, q->cy - q->h * 0.5f, q->w, q->h, pad)) {
             float dx = x - q->cx, dy = y - q->cy;
             cand[n] = i;
+            dist[n++] = sqrtf(dx * dx + dy * dy);
+        }
+    }
+    if (g.present[VT3_TC_MENU]) {
+        ctl_geom *q = &g.geo[VT3_TC_MENU];
+        float pad = 12.0f * g.s;
+        if (in_rect(x, y, q->cx - q->w * 0.5f, q->cy - q->h * 0.5f, q->w, q->h, pad)) {
+            float dx = x - q->cx, dy = y - q->cy;
+            cand[n] = VT3_TC_MENU;
             dist[n++] = sqrtf(dx * dx + dy * dy);
         }
     }
@@ -651,6 +666,15 @@ void vt3_touch_pointer(int id, int down, float x, float y)
                 p->ay = g.geo[VT3_TC_STICK].cy;
             }
         }
+        if (ctl == VT3_TC_MENU) {
+            /* The same pause menu Start reaches, from a touch: no new menu system. */
+            p->used = 0;
+            p->ctl = -1;
+            VT3_CINFO("touch", "menu button pressed");
+            vt3_touch_release_all();
+            vt3_menu_set_open(1);
+            return;
+        }
         if (ctl == VT3_TC_SWIPE) {
             if (!vt3_swipe_begin(&g.swipe, id, lx, ly, now_ms())) { p->used = 0; p->ctl = -1; return; }
             VT3_CDEBUG("touch", "swipe gesture started (pointer %d)", id);
@@ -797,6 +821,12 @@ static void draw_controls(void)
         float px = (i == VT3_TC_SELECT || i == VT3_TC_START ? 4.2f : 5.0f) * s * (q->h / (66.0f * s > 0.0f ? 66.0f * s : 1.0f));
         draw_pill(q->cx, q->cy, q->w, q->h, label, px,
                   pressed ? fill_p : fill, stroke, text);
+    }
+
+    if (g.present[VT3_TC_MENU]) {
+        ctl_geom *q = &g.geo[VT3_TC_MENU];
+        float px = 4.4f * s * (q->h / (54.0f * s > 0.0f ? 54.0f * s : 1.0f));
+        draw_pill(q->cx, q->cy, q->w, q->h, "MENU", px, fill, stroke, text);
     }
 
     if (g.present[VT3_TC_SWIPE]) {

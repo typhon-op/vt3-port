@@ -25,6 +25,9 @@
 #include "vt3/vt3_renderer.h"
 #include "vt3/vt3_touch.h"
 
+/* Provided by the Android platform layer: shows the port's main menu and parks this thread. */
+void vt3_platform_request_main_menu(void);
+
 #include "font8x8.h"
 
 #include <math.h>
@@ -56,6 +59,8 @@ static struct {
     int quick;              /* VT3_QUICK_MENU: the menu may open */
     int overlay;            /* VT3_PERF_OVERLAY */
     int overlay_full;       /* VT3_PERF_OVERLAY_FULL */
+    int overlay_pos;        /* overlay_pos marker: 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right */
+    int bat_src_is_kernel;  /* the battery reading came from sysfs this sample */
     int open;
     int guide;              /* the controls guide page is showing */
     int sel;
@@ -189,19 +194,113 @@ static int marker_int_or(const char *name, int def)
     return v;
 }
 
+/* Real readings, straight from the kernel, so the overlay works during a match with no Java
+ * activity alive: the sysfs thermal zones for the CPU and the battery's own sensor. Android does
+ * not guarantee every zone is readable, so a failure is reported as such, never guessed. */
+static int read_number(const char *path, long *out)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    long v = 0;
+    int ok = fscanf(f, "%ld", &v) == 1;
+    fclose(f);
+    if (!ok) return 0;
+    *out = v;
+    return 1;
+}
+
+static int read_text(const char *path, char *out, size_t cap)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    size_t n = fread(out, 1, cap - 1, f);
+    fclose(f);
+    out[n] = 0;
+    while (n && (out[n - 1] == '\n' || out[n - 1] == '\r')) out[--n] = 0;
+    return n > 0;
+}
+
+/* Some sensors report millidegrees, some decidegrees; both are normalised to whole degrees. */
+static int to_degrees(long raw)
+{
+    if (raw > 1000 || raw < -1000) return (int)(raw / 1000);
+    return (int)(raw / 10);
+}
+
+static int cpu_temperature(int *deg, char *src, size_t cap)
+{
+    const char *hints[] = { "cpu", "soc", "tsens", "ap", "cluster", "big", "little", "skin" };
+    char zone[128], path[192], type[96];
+    for (int i = 0; i < 64; i++) {
+        snprintf(zone, sizeof zone, "/sys/class/thermal/thermal_zone%d", i);
+        snprintf(path, sizeof path, "%s/temp", zone);
+        long raw;
+        if (!read_number(path, &raw)) continue;
+        snprintf(path, sizeof path, "%s/type", zone);
+        if (!read_text(path, type, sizeof type)) type[0] = 0;
+        for (int h = 0; h < (int)(sizeof hints / sizeof hints[0]); h++) {
+            if (strstr(type, hints[h])) {
+                int c = to_degrees(raw);
+                if (c > 0 && c < 130) {
+                    *deg = c;
+                    snprintf(src, cap, "%s (%.40s)", zone, type);
+                    return 1;
+                }
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
+static int battery_temperature(int *deg, char *src, size_t cap)
+{
+    static const char *paths[] = {
+        "/sys/class/power_supply/battery/temp",
+        "/sys/class/power_supply/bms/temp",
+        "/sys/class/power_supply/Battery/temp"
+    };
+    for (int i = 0; i < (int)(sizeof paths / sizeof paths[0]); i++) {
+        long raw;
+        if (!read_number(paths[i], &raw)) continue;
+        int c = to_degrees(raw);
+        if (c > -40 && c < 130) {
+            *deg = c;
+            snprintf(src, cap, "%.60s", paths[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void sample(void)
 {
     uint64_t now = now_ns();
     if (now < g.sample_at) return;
     g.sample_at = now + 1000000000ull;
-    marker("cpu_temp", g.cpu, sizeof g.cpu, "Unavailable");
-    marker("battery_temp", g.bat, sizeof g.bat, "Unavailable");
-    marker("cpu_temp_source", g.src, sizeof g.src, "");
+    /* The kernel first: it is the live source during play. The markers are a fallback for a
+     * device whose thermal zones are not readable and whose app can supply them. */
+    int deg = 0;
+    char src[96];
+    if (cpu_temperature(&deg, src, sizeof src)) {
+        snprintf(g.cpu, sizeof g.cpu, "%d", deg);
+        snprintf(g.src, sizeof g.src, "%s", src);
+    } else {
+        marker("cpu_temp", g.cpu, sizeof g.cpu, "Unavailable");
+        marker("cpu_temp_source", g.src, sizeof g.src, "");
+    }
+    if (battery_temperature(&deg, src, sizeof src)) {
+        snprintf(g.bat, sizeof g.bat, "%d", deg);
+        g.bat_src_is_kernel = 1;
+    } else {
+        marker("battery_temp", g.bat, sizeof g.bat, "Unavailable");
+    }
     marker("thermal", g.therm, sizeof g.therm, "");
     /* The settings screen writes these while the game runs, so the overlay follows a toggle
      * without a restart. The markers win over the environment set at launch. */
     g.overlay = marker_int_or("perf_overlay", g.overlay) != 0;
     g.overlay_full = marker_int_or("perf_overlay_full", g.overlay_full) != 0;
+    g.overlay_pos = marker_int_or("overlay_pos", g.overlay_pos);
 }
 
 /* ---- overlay ------------------------------------------------------------------------- */
@@ -250,9 +349,11 @@ void vt3_menu_overlay(int drawable_w, int drawable_h)
         float w = text_w(line, px) + 20.0f + text_w("CPU ", px) + 34.0f
                 + text_w(" BAT ", px) + 34.0f;
         float h = 8.0f * px + 12.0f;
-        plate(10, 10, w, h, C_PANEL, C_ORANGE);
-        quad(10, 10, 14, 10 + h, C_ORANGE);
-        float x = 20, y = 16;
+        float bx = g.overlay_pos == 1 || g.overlay_pos == 3 ? (float)lw - w - 10.0f : 10.0f;
+        float by = g.overlay_pos >= 2 ? (float)lh - h - 10.0f : 10.0f;
+        plate(bx, by, w, h, C_PANEL, C_ORANGE);
+        quad(bx, by, bx + 4, by + h, C_ORANGE);
+        float x = bx + 10, y = by + 6;
         text(line, x, y, px, C_INK);
         x += text_w(line, px) + 14.0f;
         text("CPU ", x, y, px, C_INK_SOFT);
@@ -279,25 +380,27 @@ void vt3_menu_overlay(int drawable_w, int drawable_h)
     if (text_w(l1, px) + 12.0f > w) w = text_w(l1, px) + 12.0f;
     if (text_w(l4, px) + 12.0f > w) w = text_w(l4, px) + 12.0f;
     float h = 4 * (8.0f * px + 5.0f) + 16.0f + (g.src[0] ? 10.0f : 0.0f);
-    plate(10, 10, w, h, C_PANEL, C_ORANGE);
-    quad(10, 10, 14, 10 + h, C_ORANGE);
-    float y = 16;
-    text(l1, 20, y, px, C_INK); y += 8.0f * px + 5.0f;
-    text("CPU Temp: ", 20, y, px, C_INK_SOFT);
-    temp_text(20 + text_w("CPU Temp: ", px), y, px, g.cpu, C_INK); y += 8.0f * px + 5.0f;
-    text("Battery Temp: ", 20, y, px, C_INK_SOFT);
-    temp_text(20 + text_w("Battery Temp: ", px), y, px, g.bat, C_INK); y += 8.0f * px + 5.0f;
-    text(l4, 20, y, px, C_INK_SOFT);
+    float bx = g.overlay_pos == 1 || g.overlay_pos == 3 ? (float)lw - w - 10.0f : 10.0f;
+    float by = g.overlay_pos >= 2 ? (float)lh - h - 10.0f : 10.0f;
+    plate(bx, by, w, h, C_PANEL, C_ORANGE);
+    quad(bx, by, bx + 4, by + h, C_ORANGE);
+    float y = by + 6;
+    text(l1, bx + 10, y, px, C_INK); y += 8.0f * px + 5.0f;
+    text("CPU Temp: ", bx + 10, y, px, C_INK_SOFT);
+    temp_text(bx + 10 + text_w("CPU Temp: ", px), y, px, g.cpu, C_INK); y += 8.0f * px + 5.0f;
+    text("Battery Temp: ", bx + 10, y, px, C_INK_SOFT);
+    temp_text(bx + 10 + text_w("Battery Temp: ", px), y, px, g.bat, C_INK); y += 8.0f * px + 5.0f;
+    text(l4, bx + 10, y, px, C_INK_SOFT);
     if (g.src[0]) {
         char src[96];
         snprintf(src, sizeof src, "CPU source: %.50s", g.src);
-        text(src, 20, 10 + h - 10.0f, 1.1f, C_INK_SOFT);
+        text(src, bx + 10, by + h - 10.0f, 1.1f, C_INK_SOFT);
     }
 }
 
 /* ---- quick menu ---------------------------------------------------------------------- */
 
-static const char *rows[] = { "Resume", "Touchscreen controls", "On-screen controls", "Controls guide", "Settings" };
+static const char *rows[] = { "Resume", "Touchscreen controls", "On-screen controls", "Controls guide", "Settings", "Exit to main menu" };
 #define ROWS ((int)(sizeof rows / sizeof rows[0]))
 
 static int touch_on(void)
@@ -498,6 +601,11 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
                         VT3_CINFO("menu", "opening the settings screen (match stays paused)");
                         g.wait_screen = 1;
                         vt3_android_open_settings();
+                        break;
+                    case 5:
+                        vt3_touch_release_all();
+                        VT3_CINFO("menu", "exit to main menu");
+                        vt3_platform_request_main_menu();   /* does not return */
                         break;
                     default:
                         break;
