@@ -4,80 +4,95 @@
  * The overlay is drawn as translucent vector shapes through the fixed-function (XYZRHW) path, so
  * it looks the same on Vulkan and OpenGL and scales with the frame. Geometry is built in the
  * renderer's logical pixels; touch points arrive in drawable pixels and are mapped back through the
- * present letterbox, so a control is hit where it is drawn even when the frame is letterboxed.
+ * present letterbox (vt3_touch_map_point), so a control is hit where it is drawn even when the
+ * frame is letterboxed.
  *
- * Layout (design units, 1080 logical pixels tall; scaled to the frame height):
- *   - a thumb stick lower-left (movement),
- *   - the A/B/X/Y diamond lower-right (Top Spin / Slice / Lob),
- *   - LB/RB pills in the top corners (Instruct COM Partner / Tour Calendar),
- *   - SELECT / START pills bottom centre (Change Camera / Pause).
+ * Everything a player can change lives in touch.cfg (vt3_touch_config.h): the layout's per-control
+ * position, size, opacity and presence, the stick profile, the swipe pad and the lock. The Standard
+ * layout with the Default profile reproduces the 0.3.0 geometry and stick response exactly; the
+ * regression test in tools/touchtest holds that to the original arithmetic.
  *
- * The controls hide themselves while a physical keyboard or gamepad is in use (see physical_present),
- * so they never cover the game for a player on real hardware.
- *
- * Labels come from the public-domain 8x8 bitmap font in font8x8.h, drawn as solid pixel quads.
+ * The left stick follows the game: in a match it is an analog stick, and while a menu is open it is
+ * a digital d-pad with menu repeat timing. The mode switch, the repeat timing, the gesture
+ * recognition and the touch-to-control ownership all come from touch_core.c, which is host-tested.
  */
 #include "vt3/vt3_log.h"
 #include "vt3/vt3_input.h"
+#include "vt3/vt3_menu.h"
 #include "vt3/vt3_renderer.h"
 #include "vt3/vt3_touch.h"
+#include "vt3/vt3_touch_config.h"
+#include "vt3/vt3_touch_core.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "font8x8.h"
 
-enum {
-    CTL_STICK = 0,
-    CTL_A, CTL_B, CTL_X, CTL_Y,
-    CTL_LB, CTL_RB,
-    CTL_SELECT, CTL_START,
-    CTL_COUNT
-};
-
 #define TOUCH_MAX_PTR 10
+#define MENU_DWELL_MS 140u
+#define DPAD_PULSE_MS 55u
 
 typedef struct {
     int   used;
     int   id;
-    int   ctl;              /* CTL_* the pointer is driving, -1 while unassigned */
+    int   ctl;              /* VT3_TC_* the pointer is driving, -1 while unassigned */
     float lx, ly;           /* last position, logical pixels */
+    float ax, ay;           /* floating stick: where this finger put the centre */
 } touch_ptr;
+
+/* One control's geometry for this frame, in logical pixels. */
+typedef struct {
+    float cx, cy;
+    float r;                /* radius: stick, buttons, swipe pad half-extent */
+    float w, h;             /* pills */
+} ctl_geom;
 
 static struct {
     int   inited;
     int   enabled;          /* VT3_TOUCH */
-    int   force;            /* VT3_TOUCH_FORCE: show even with a physical device */
-    float user_scale;
-    float alpha;
+    int   force;            /* VT3_TOUCH_FORCE */
     int   color;
-    int   hidden_logged;
+    float user_scale;
+    float alpha;            /* global marker opacity, multiplied into every control */
+    char  cfg_path[512];
+    vt3_touch_cfg cfg;
+    int   cfg_state;        /* 0 loaded, -1 missing, -2 bad: logged once */
 
-    /* View: how logical pixels map into the drawable. */
     int      have_view;
     int      logical_w, logical_h;
-    int      draw_w, draw_h;
     vt3_rect dst;
 
-    /* Layout, logical pixels. */
-    float s;                                    /* design scale: logical_h / 1080 * user_scale */
-    float stick_cx, stick_cy, stick_r, knob_r;
-    float ab_r;
-    float ab_cx[4], ab_cy[4];                   /* A, B, X, Y */
-    float sh_w, sh_h, lb_cx, lb_cy, rb_cx, rb_cy;
-    float pill_h, sel_cx, sel_cy, sel_w, st_cx, st_cy, st_w;
+    float s;
+    ctl_geom geo[VT3_TC_COUNT];
+    int      present[VT3_TC_COUNT];
+    float    opacity[VT3_TC_COUNT];
 
     touch_ptr ptr[TOUCH_MAX_PTR];
     float knob_x, knob_y;
-    uint32_t draw_mask;                         /* controls held, for the drawn pressed state */
+    uint32_t draw_mask;
     int stick_held;
 
-    /* Last input actually pushed to the game, so only changes are emitted. */
+    vt3_mode_state   mode;
+    vt3_repeat_state rep;
+    vt3_swipe_state  swipe;
+    uint32_t dpad_mask;
+    uint32_t dpad_until_ms;
+    int      last_dir;
+
+    /* Draw calls per presented frame, for telling a menu from a match (see guest_in_menu). */
+    unsigned draws_ring[64];
+    int      draws_at;
+    unsigned draws_max;
+    int      guest_menu;
+
     uint32_t applied_mask;
     float    applied_lx, applied_ly;
+    uint32_t pulse_mask;    /* d-pad bits being held for one pulse */
 
-    /* Vertex batch for this frame. */
     vt3_tlvertex *v;
     uint32_t vn, vcap;
     int      shadow;
@@ -97,16 +112,15 @@ static uint32_t rgba(int r, int gr, int b, float a)
     return ((uint32_t)(a * 255.0f + 0.5f) << 24) | ((uint32_t)r << 16) | ((uint32_t)gr << 8) | (uint32_t)b;
 }
 
-/* Per-button accent. Monochrome when VT3_TOUCH_COLOR=0. */
 static uint32_t accent(int ctl, float a)
 {
     if (!g.color) return rgba(220, 227, 240, a);
     switch (ctl) {
-    case CTL_A: return rgba(112, 202, 112, a);
-    case CTL_B: return rgba(236, 94, 100, a);
-    case CTL_X: return rgba(98, 156, 242, a);
-    case CTL_Y: return rgba(240, 196, 72, a);
-    default:    return rgba(220, 227, 240, a);
+    case VT3_TC_A: return rgba(112, 202, 112, a);
+    case VT3_TC_B: return rgba(236, 94, 100, a);
+    case VT3_TC_X: return rgba(98, 156, 242, a);
+    case VT3_TC_Y: return rgba(240, 196, 72, a);
+    default:       return rgba(220, 227, 240, a);
     }
 }
 
@@ -173,13 +187,12 @@ static int arc_segments(float r)
     return seg;
 }
 
-/* A ring centred on radius r_out - th/2, from angle a0 to a1 (radians, 0 = +x, growing clockwise). */
 static void emit_arc(float cx, float cy, float r_out, float th, float a0, float a1, uint32_t c)
 {
     float r = r_out - th * 0.5f;
     if (r < 0.5f) return;
     int seg = arc_segments(r);
-    if (fabsf(a1 - a0) < 3.0f) seg = seg / 4 + 1;      /* quarter arcs need fewer */
+    if (fabsf(a1 - a0) < 3.0f) seg = seg / 4 + 1;
     if (seg < 3) seg = 3;
     float inner = r - th * 0.5f < 0.0f ? 0.0f : r - th * 0.5f;
     float outer = r + th * 0.5f;
@@ -208,7 +221,6 @@ static void emit_disc(float cx, float cy, float r, uint32_t c)
     }
 }
 
-/* Outline (th small) or solid fill (th == h) of a rounded rectangle. */
 static void emit_round_rect(float x, float y, float w, float h, float rad, float th, uint32_t c)
 {
     if (rad > w * 0.5f) rad = w * 0.5f;
@@ -220,10 +232,10 @@ static void emit_round_rect(float x, float y, float w, float h, float rad, float
         emit_rect(x + w - th, y, th, h, c);
         return;
     }
-    emit_arc(x + rad,     y + rad,     rad + th * 0.5f, th, VT3_PI,         VT3_PI * 1.5f, c);
-    emit_arc(x + w - rad, y + rad,     rad + th * 0.5f, th, VT3_PI * 1.5f,  VT3_PI * 2.0f, c);
-    emit_arc(x + w - rad, y + h - rad, rad + th * 0.5f, th, 0.0f,           VT3_PI * 0.5f, c);
-    emit_arc(x + rad,     y + h - rad, rad + th * 0.5f, th, VT3_PI * 0.5f,  VT3_PI,         c);
+    emit_arc(x + rad,     y + rad,     rad + th * 0.5f, th, VT3_PI,        VT3_PI * 1.5f, c);
+    emit_arc(x + w - rad, y + rad,     rad + th * 0.5f, th, VT3_PI * 1.5f, VT3_PI * 2.0f, c);
+    emit_arc(x + w - rad, y + h - rad, rad + th * 0.5f, th, 0.0f,          VT3_PI * 0.5f, c);
+    emit_arc(x + rad,     y + h - rad, rad + th * 0.5f, th, VT3_PI * 0.5f, VT3_PI,        c);
     emit_line(x + rad, y + th * 0.5f, x + w - rad, y + th * 0.5f, th, c);
     emit_line(x + rad, y + h - th * 0.5f, x + w - rad, y + h - th * 0.5f, th, c);
     emit_line(x + th * 0.5f, y + rad, x + th * 0.5f, y + h - rad, th, c);
@@ -256,7 +268,23 @@ static void emit_text(const char *s, float x, float y, float px, uint32_t c, int
     for (; *s; s++, x += 8.0f * px) emit_glyph(*s, x, y, px, c);
 }
 
-/* ---- environment and visibility ------------------------------------------- */
+/* ---- environment, config and visibility ----------------------------------- */
+
+static void load_config(void)
+{
+    const char *dir = getenv("VT3_SETTINGS_DIR");
+    if (!dir || !*dir) dir = ".";
+    snprintf(g.cfg_path, sizeof g.cfg_path, "%s/touch.cfg", dir);
+    g.cfg_state = vt3_touch_cfg_load(&g.cfg, g.cfg_path);
+    if (g.cfg_state == -1) {
+        VT3_INFO("touch: no touch.cfg at %s; using the shipped layout", g.cfg_path);
+    } else if (g.cfg_state == -2) {
+        VT3_CWARN("touch", "touch.cfg is not readable; keeping the last good settings");
+    } else {
+        VT3_CINFO("touch", "loaded %s (layout %d, profile %d, %s)", g.cfg_path,
+                  g.cfg.layout, g.cfg.profile, g.cfg.locked ? "locked" : "unlocked");
+    }
+}
 
 static void read_env(void)
 {
@@ -265,6 +293,7 @@ static void read_env(void)
     g.user_scale = 1.0f;
     g.alpha = 1.0f;
     g.color = 1;
+    vt3_touch_cfg_defaults(&g.cfg);
     const char *e = getenv("VT3_TOUCH");
 #ifdef __ANDROID__
     g.enabled = e ? atoi(e) != 0 : 1;
@@ -275,31 +304,29 @@ static void read_env(void)
     if ((e = getenv("VT3_TOUCH_SCALE")) != NULL && *e) g.user_scale = clampf((float)atof(e), 0.4f, 2.5f);
     if ((e = getenv("VT3_TOUCH_ALPHA")) != NULL && *e) g.alpha = clampf((float)atof(e), 0.1f, 1.0f);
     if ((e = getenv("VT3_TOUCH_COLOR")) != NULL && *e) g.color = atoi(e) != 0;
+    vt3_mode_state ms = { VT3_TOUCH_ANALOG, VT3_TOUCH_ANALOG, 0 };
+    g.mode = ms;
+    g.rep.dir = VT3_DPAD_NONE;
+    vt3_swipe_reset(&g.swipe);
+    load_config();
     if (g.enabled) VT3_INFO("touch: on-screen controls enabled (scale %.2f, alpha %.2f, colour %d)",
                             g.user_scale, g.alpha, g.color);
 }
 
-/* A physical keyboard or gamepad is in use: the controls stay out of the way. */
-/* Re-reads the VT3_TOUCH* variables. The quick menu toggles the on-screen controls while the game
- * is running, so the settings it writes have to reach this module without a restart. */
 void vt3_touch_reload(void)
 {
     read_env();
+    load_config();
     g.draw_mask = 0;
-    g.hidden_logged = 0;
-    VT3_CINFO("touch", "reloaded: %s", g.enabled ? "on" : "off");
-}
-
-static int physical_present(void)
-{
-    if (g.force) return 0;
-    return vt3_input_pad_connected() || vt3_input_keyboard_connected();
+    vt3_touch_release_all();
+    VT3_CINFO("touch", "reloaded: %s, layout %d, profile %d", g.enabled ? "on" : "off",
+              g.cfg.layout, g.cfg.profile);
 }
 
 static int active(void)
 {
     read_env();
-    return g.enabled && !physical_present();
+    return g.enabled;
 }
 
 int vt3_touch_enabled(void)
@@ -307,7 +334,16 @@ int vt3_touch_enabled(void)
     return active();
 }
 
-/* ---- layout and hit testing ---------------------------------------------- */
+/* The mode the game is in, as far as the controls are concerned. */
+static int want_dpad(void)
+{
+    if (vt3_menu_open()) return 1;        /* the port's own pause menu: a real pause */
+    return g.guest_menu;                  /* the game's own menus, from the draw profile */
+}
+
+/* ---- layout --------------------------------------------------------------- */
+
+static const vt3_touch_ctl_cfg *ctl_cfg(int ctl) { return vt3_touch_cfg_ctl(&g.cfg, ctl); }
 
 static void layout(void)
 {
@@ -315,32 +351,59 @@ static void layout(void)
     float s = H / 1080.0f * g.user_scale;
     g.s = s;
 
-    g.stick_r = 168.0f * s;
-    g.knob_r = 70.0f * s;
-    g.stick_cx = 200.0f * s;
-    g.stick_cy = H - 200.0f * s;
+    for (int i = 0; i < VT3_TC_COUNT; i++) {
+        const vt3_touch_ctl_cfg *c = ctl_cfg(i);
+        ctl_geom *q = &g.geo[i];
+        memset(q, 0, sizeof *q);
+        g.present[i] = c && !c->removed && c->visible;
+        g.opacity[i] = c ? c->opacity : 1.0f;
+        float size = c ? c->size : 1.0f;
 
-    g.ab_r = 74.0f * s;
-    float d = 152.0f * s;
-    float acx = W - 275.0f * s, acy = H - 250.0f * s;
-    g.ab_cx[0] = acx;        g.ab_cy[0] = acy + d;   /* A, bottom */
-    g.ab_cx[1] = acx + d;    g.ab_cy[1] = acy;       /* B, right */
-    g.ab_cx[2] = acx - d;    g.ab_cy[2] = acy;       /* X, left */
-    g.ab_cx[3] = acx;        g.ab_cy[3] = acy - d;   /* Y, top */
-
-    g.sh_w = 150.0f * s;
-    g.sh_h = 62.0f * s;
-    g.lb_cx = 40.0f * s + g.sh_w * 0.5f;
-    g.rb_cx = W - 40.0f * s - g.sh_w * 0.5f;
-    g.lb_cy = g.rb_cy = 34.0f * s + g.sh_h * 0.5f;
-
-    g.pill_h = 66.0f * s;
-    float px = 4.2f * s;
-    g.sel_w = 6.0f * 8.0f * px + 48.0f * s;          /* "SELECT" */
-    g.st_w  = 5.0f * 8.0f * px + 48.0f * s;          /* "START"  */
-    g.sel_cx = W * 0.5f - 140.0f * s;
-    g.st_cx  = W * 0.5f + 140.0f * s;
-    g.sel_cy = g.st_cy = H - 78.0f * s;
+        /* The built-in positions are the 0.3.0 formulas; a saved x/y overrides them. */
+        switch (i) {
+        case VT3_TC_STICK:
+            q->r = 168.0f * s * size;
+            q->cx = c && c->x >= 0.0f ? c->x * W : 200.0f * s;
+            q->cy = c && c->y >= 0.0f ? c->y * H : H - 200.0f * s;
+            break;
+        case VT3_TC_A: case VT3_TC_B: case VT3_TC_X: case VT3_TC_Y: {
+            float d = 152.0f * s * size;
+            float acx = W - 275.0f * s, acy = H - 250.0f * s;
+            static const float ox[4] = { 0.0f, 1.0f, -1.0f, 0.0f };   /* A, B, X, Y */
+            static const float oy[4] = { 1.0f, 0.0f, 0.0f, -1.0f };
+            int k = i - VT3_TC_A;
+            q->r = 74.0f * s * size;
+            q->cx = c && c->x >= 0.0f ? c->x * W : acx + ox[k] * d;
+            q->cy = c && c->y >= 0.0f ? c->y * H : acy + oy[k] * d;
+            break;
+        }
+        case VT3_TC_LB: case VT3_TC_RB: {
+            q->w = 150.0f * s * size;
+            q->h = 62.0f * s * size;
+            float defx = i == VT3_TC_LB ? 40.0f * s + q->w * 0.5f : W - 40.0f * s - q->w * 0.5f;
+            q->cx = c && c->x >= 0.0f ? c->x * W : defx;
+            q->cy = c && c->y >= 0.0f ? c->y * H : 34.0f * s + q->h * 0.5f;
+            break;
+        }
+        case VT3_TC_SELECT: case VT3_TC_START: {
+            float px = 4.2f * s * size;
+            q->h = 66.0f * s * size;
+            q->w = (i == VT3_TC_SELECT ? 6.0f : 5.0f) * 8.0f * px + 48.0f * s * size;
+            float defx = W * 0.5f + (i == VT3_TC_SELECT ? -140.0f : 140.0f) * s;
+            q->cx = c && c->x >= 0.0f ? c->x * W : defx;
+            q->cy = c && c->y >= 0.0f ? c->y * H : H - 78.0f * s;
+            break;
+        }
+        case VT3_TC_SWIPE:
+            q->r = 110.0f * s * size;
+            q->cx = c && c->x >= 0.0f ? c->x * W : W * 0.5f;
+            q->cy = c && c->y >= 0.0f ? c->y * H : H * 0.42f;
+            g.present[i] = g.present[i] && g.cfg.swipe_enabled;
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static int in_rect(float px, float py, float x, float y, float w, float h, float pad)
@@ -348,100 +411,171 @@ static int in_rect(float px, float py, float x, float y, float w, float h, float
     return px >= x - pad && px <= x + w + pad && py >= y - pad && py <= y + h + pad;
 }
 
-/* Which control a fresh touch at (x, y) logical grabs, or -1. Order: stick, buttons, pills. */
-static int hit_test(float x, float y)
+/* Which controls a touch at (x, y) is inside, nearest first. Fills candidates/dist. */
+static int candidates_at(float x, float y, int *cand, float *dist)
 {
-    if (g.s <= 0.0f) return -1;
-    float rr = g.stick_r * 1.9f;
-    if ((x - g.stick_cx) * (x - g.stick_cx) + (y - g.stick_cy) * (y - g.stick_cy) <= rr * rr) return CTL_STICK;
-    for (int i = 0; i < 4; i++) {
-        float r = g.ab_r * 1.35f;
-        if ((x - g.ab_cx[i]) * (x - g.ab_cx[i]) + (y - g.ab_cy[i]) * (y - g.ab_cy[i]) <= r * r) return CTL_A + i;
+    int n = 0;
+    const vt3_stick_cfg *prof = vt3_touch_cfg_profile(&g.cfg);
+
+    /* The stick: a circle, or the floating profile's zone (the lower left of the screen). */
+    if (g.present[VT3_TC_STICK]) {
+        ctl_geom *q = &g.geo[VT3_TC_STICK];
+        if (prof && prof->floating) {
+            if (x < g.logical_w * 0.55f && y > g.logical_h * 0.35f) {
+                cand[n] = VT3_TC_STICK;
+                dist[n++] = 0.0f;
+            }
+        } else {
+            float rr = q->r * 1.9f;
+            float dx = x - q->cx, dy = y - q->cy;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d <= rr) { cand[n] = VT3_TC_STICK; dist[n++] = d; }
+        }
     }
-    float pad = 14.0f * g.s;
-    if (in_rect(x, y, g.lb_cx - g.sh_w * 0.5f, g.lb_cy - g.sh_h * 0.5f, g.sh_w, g.sh_h, pad)) return CTL_LB;
-    if (in_rect(x, y, g.rb_cx - g.sh_w * 0.5f, g.rb_cy - g.sh_h * 0.5f, g.sh_w, g.sh_h, pad)) return CTL_RB;
-    if (in_rect(x, y, g.sel_cx - g.sel_w * 0.5f, g.sel_cy - g.pill_h * 0.5f, g.sel_w, g.pill_h, pad)) return CTL_SELECT;
-    if (in_rect(x, y, g.st_cx - g.st_w * 0.5f, g.st_cy - g.pill_h * 0.5f, g.st_w, g.pill_h, pad)) return CTL_START;
-    return -1;
+    for (int i = VT3_TC_A; i <= VT3_TC_Y; i++) {
+        if (!g.present[i]) continue;
+        ctl_geom *q = &g.geo[i];
+        float rr = q->r * 1.35f;
+        float dx = x - q->cx, dy = y - q->cy;
+        float d = sqrtf(dx * dx + dy * dy);
+        if (d <= rr) { cand[n] = i; dist[n++] = d; }
+    }
+    for (int i = VT3_TC_LB; i <= VT3_TC_START; i++) {
+        if (!g.present[i]) continue;
+        ctl_geom *q = &g.geo[i];
+        float pad = 14.0f * g.s;
+        if (in_rect(x, y, q->cx - q->w * 0.5f, q->cy - q->h * 0.5f, q->w, q->h, pad)) {
+            float dx = x - q->cx, dy = y - q->cy;
+            cand[n] = i;
+            dist[n++] = sqrtf(dx * dx + dy * dy);
+        }
+    }
+    if (g.present[VT3_TC_SWIPE]) {
+        ctl_geom *q = &g.geo[VT3_TC_SWIPE];
+        float dx = x - q->cx, dy = y - q->cy;
+        float d = sqrtf(dx * dx + dy * dy);
+        if (d <= q->r) { cand[n] = VT3_TC_SWIPE; dist[n++] = d; }
+    }
+    return n;
 }
 
-static uint32_t bit_for(int ctl)
+static uint32_t owned_mask(void)
 {
-    switch (ctl) {
-    case CTL_A: return VT3_BTN_A;
-    case CTL_B: return VT3_BTN_B;
-    case CTL_X: return VT3_BTN_X;
-    case CTL_Y: return VT3_BTN_Y;
-    case CTL_LB: return VT3_BTN_LB;
-    case CTL_RB: return VT3_BTN_RB;
-    case CTL_SELECT: return VT3_BTN_BACK;
-    case CTL_START: return VT3_BTN_START;
-    default: return 0;
-    }
+    uint32_t m = 0;
+    for (int i = 0; i < TOUCH_MAX_PTR; i++)
+        if (g.ptr[i].used && g.ptr[i].ctl >= 0) m |= 1u << g.ptr[i].ctl;
+    return m;
 }
 
 /* ---- input -> game state -------------------------------------------------- */
 
+static uint32_t now_ms(void)
+{
+    /* The renderer's own frame clock: monotonic, and already used by the overlay. */
+    static uint32_t base;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint32_t t = (uint32_t)((uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u);
+    if (!base) base = t;
+    return t;
+}
+
 /* VT3_TOUCH_DEBUG=1 traces every change of what the controls are holding. */
-static void log_state(uint32_t mask, float lx, float ly)
+static void log_state(uint32_t mask, float lx, float ly, int mode)
 {
     static int dbg = -1;
     static uint32_t last_mask;
     static float last_lx, last_ly;
+    static int last_mode = -1;
     if (dbg < 0) dbg = getenv("VT3_TOUCH_DEBUG") != NULL;
     if (!dbg) return;
-    if (mask == last_mask && lx == last_lx && ly == last_ly) return;
-    last_mask = mask; last_lx = lx; last_ly = ly;
+    if (mask == last_mask && lx == last_lx && ly == last_ly && mode == last_mode) return;
+    last_mask = mask; last_lx = lx; last_ly = ly; last_mode = mode;
     int held = 0;
     for (int i = 0; i < TOUCH_MAX_PTR; i++) if (g.ptr[i].used) held++;
-    VT3_INFO("touch: buttons %08x stick %+.2f,%+.2f (%d pointers)", mask, lx, ly, held);
+    VT3_INFO("touch: %s buttons %08x stick %+.2f,%+.2f (%d pointers)",
+             mode == VT3_TOUCH_DPAD ? "dpad" : "analog", mask, lx, ly, held);
+}
+
+/* Send the d-pad bit for a direction for one short pulse, so a menu sees a real press and release. */
+static void pulse_dpad(int dir, uint32_t now)
+{
+    uint32_t bit = dir == VT3_DPAD_UP ? VT3_BTN_UP : dir == VT3_DPAD_DOWN ? VT3_BTN_DOWN
+                 : dir == VT3_DPAD_LEFT ? VT3_BTN_LEFT : dir == VT3_DPAD_RIGHT ? VT3_BTN_RIGHT : 0;
+    if (!bit) return;
+    g.pulse_mask |= bit;
+    g.dpad_until_ms = now + DPAD_PULSE_MS;
 }
 
 /* Push whatever the controls currently hold into the game, changing only what differs. */
 static void apply_state(void)
 {
+    uint32_t now = now_ms();
     uint32_t mask = 0;
     float lx = 0.0f, ly = 0.0f;
     int stick = 0;
-    float kx = g.stick_cx, ky = g.stick_cy;
+    float kx = g.geo[VT3_TC_STICK].cx, ky = g.geo[VT3_TC_STICK].cy;
+    const vt3_stick_cfg *prof = vt3_touch_cfg_profile(&g.cfg);
 
     for (int i = 0; i < TOUCH_MAX_PTR; i++) {
         touch_ptr *p = &g.ptr[i];
         if (!p->used || p->ctl < 0) continue;
-        if (p->ctl == CTL_STICK) {
+        if (p->ctl == VT3_TC_STICK) {
             stick = 1;
-            float dx = p->lx - g.stick_cx, dy = p->ly - g.stick_cy;
+            float cx = p->ax, cy = p->ay;          /* floating profile moves the centre */
+            float r = g.geo[VT3_TC_STICK].r;
+            float dx = p->lx - cx, dy = p->ly - cy;
             float d = sqrtf(dx * dx + dy * dy);
-            if (d > g.stick_r && d > 0.0f) { dx = dx * g.stick_r / d; dy = dy * g.stick_r / d; d = g.stick_r; }
-            kx = g.stick_cx + dx;
-            ky = g.stick_cy + dy;
-            float ax = g.stick_r > 0.0f ? dx / g.stick_r : 0.0f;
-            float ay = g.stick_r > 0.0f ? dy / g.stick_r : 0.0f;
-            const float dz = 0.14f;
-            float mag = sqrtf(ax * ax + ay * ay);
-            if (mag <= dz) { ax = 0.0f; ay = 0.0f; }
-            else { float k = (mag - dz) / (1.0f - dz) / mag; ax *= k; ay *= k; }
-            lx = clampf(ax, -1.0f, 1.0f);
-            ly = clampf(ay, -1.0f, 1.0f);
+            if (d > r && d > 0.0f) { dx = dx * r / d; dy = dy * r / d; }
+            kx = cx + dx;
+            ky = cy + dy;
+            if (g.mode.mode == VT3_TOUCH_ANALOG) {
+                vt3_stick_apply(prof, dx, dy, r, &lx, &ly);
+            } else {
+                /* Digital: a direction, repeated with menu timing. */
+                float ax = r > 0.0f ? dx / r : 0.0f;
+                float ay = r > 0.0f ? dy / r : 0.0f;
+                int dir = VT3_DPAD_NONE;
+                if (fabsf(ax) > 0.35f || fabsf(ay) > 0.35f)
+                    dir = fabsf(ax) > fabsf(ay) ? (ax < 0 ? VT3_DPAD_LEFT : VT3_DPAD_RIGHT)
+                                                : (ay < 0 ? VT3_DPAD_UP : VT3_DPAD_DOWN);
+                vt3_repeat_timing t = { 400, 120 };
+                if (vt3_repeat_update(&g.rep, dir, now, &t)) pulse_dpad(dir, now);
+                if (dir == VT3_DPAD_NONE) g.rep.dir = VT3_DPAD_NONE;
+                if (dir != g.last_dir) {
+                    VT3_CDEBUG("touch", "menu direction %d", dir);
+                    g.last_dir = dir;
+                }
+            }
+        } else if (p->ctl == VT3_TC_SWIPE) {
+            /* The action was pressed when the direction locked (see vt3_touch_pointer); holding the
+             * finger keeps it pressed, which is exactly what holding the button does. */
         } else {
-            mask |= bit_for(p->ctl);
+            mask |= vt3_touch_button_mask(p->ctl);
         }
     }
+
+    /* The swipe action, while its gesture is live. */
+    if (g.swipe.active && g.swipe.fired && g.swipe.dir != VT3_DPAD_NONE) {
+        int c = vt3_touch_swipe_ctl(g.cfg.swipe_map, g.swipe.dir);
+        mask |= vt3_touch_button_mask(c);
+    }
+
     g.knob_x = kx;
     g.knob_y = ky;
     g.stick_held = stick;
 
-    /* The stick also drives the d-pad, so menus (which read the hat) navigate. */
-    uint32_t dp = 0;
-    if (lx < -0.45f) dp |= VT3_BTN_LEFT;
-    if (lx >  0.45f) dp |= VT3_BTN_RIGHT;
-    if (ly < -0.45f) dp |= VT3_BTN_UP;
-    if (ly >  0.45f) dp |= VT3_BTN_DOWN;
-    g.draw_mask = mask | dp;
-    mask |= dp;
+    /* A pulse that has run its course is released here. */
+    if (g.pulse_mask && (int32_t)(now - g.dpad_until_ms) >= 0) {
+        uint32_t off = g.pulse_mask;
+        g.pulse_mask = 0;
+        vt3_input_set_button(off, 0);
+        vt3_input_set_pad_button(off, 0);
+    }
+    mask |= g.pulse_mask;
 
-    log_state(mask, lx, ly);
+    g.draw_mask = mask;
+    log_state(mask, lx, ly, g.mode.mode);
 
     uint32_t on = mask & ~g.applied_mask;
     uint32_t off = g.applied_mask & ~mask;
@@ -457,12 +591,16 @@ static void apply_state(void)
     }
 }
 
-/* Drop everything the controls were holding (hidden, focus lost, window gone). */
+/* Drop everything the controls were holding (hidden, focus lost, mode change, window gone). */
 static void release_state(void)
 {
     for (int i = 0; i < TOUCH_MAX_PTR; i++) g.ptr[i].used = 0;
     g.draw_mask = 0;
     g.stick_held = 0;
+    g.pulse_mask = 0;
+    g.rep.dir = VT3_DPAD_NONE;
+    g.last_dir = VT3_DPAD_NONE;
+    vt3_swipe_reset(&g.swipe);
     if (g.applied_mask) {
         vt3_input_set_button(g.applied_mask, 0);
         vt3_input_set_pad_button(g.applied_mask, 0);
@@ -475,22 +613,12 @@ static void release_state(void)
     }
 }
 
-/* Map a drawable-space point into logical pixels through the present letterbox. */
-static void to_logical(float dx, float dy, float *lx, float *ly)
-{
-    if (!g.have_view || g.dst.w <= 0 || g.dst.h <= 0 || g.logical_w <= 0 || g.logical_h <= 0) {
-        *lx = dx; *ly = dy;
-        return;
-    }
-    *lx = (dx - (float)g.dst.x) * (float)g.logical_w / (float)g.dst.w;
-    *ly = (dy - (float)g.dst.y) * (float)g.logical_h / (float)g.dst.h;
-}
-
 void vt3_touch_pointer(int id, int down, float x, float y)
 {
     if (!vt3_touch_enabled()) return;
     float lx, ly;
-    to_logical(x, y, &lx, &ly);
+    vt3_touch_rect dst = { g.dst.x, g.dst.y, g.dst.w, g.dst.h };
+    vt3_touch_map_point(x, y, dst, g.logical_w, g.logical_h, &lx, &ly);
 
     touch_ptr *p = NULL;
     for (int i = 0; i < TOUCH_MAX_PTR; i++) {
@@ -502,16 +630,57 @@ void vt3_touch_pointer(int id, int down, float x, float y)
             if (!g.ptr[i].used) { p = &g.ptr[i]; break; }
         }
         if (!p) return;
+        int cand[VT3_TC_COUNT];
+        float dist[VT3_TC_COUNT];
+        int n = candidates_at(lx, ly, cand, dist);
+        int ctl = vt3_touch_pick(cand, dist, n, owned_mask());
+        if (ctl < 0) return;                       /* outside the controls, or already held */
         p->used = 1;
         p->id = id;
-        p->ctl = hit_test(lx, ly);
-        if (p->ctl < 0) { p->used = 0; return; }   /* a touch outside the controls is ignored */
+        p->ctl = ctl;
+        p->lx = lx;
+        p->ly = ly;
+        const vt3_stick_cfg *prof = vt3_touch_cfg_profile(&g.cfg);
+        if (ctl == VT3_TC_STICK) {
+            /* Floating: the stick's centre is where the thumb landed, inside the control zone. */
+            if (prof && prof->floating) {
+                p->ax = lx;
+                p->ay = ly;
+            } else {
+                p->ax = g.geo[VT3_TC_STICK].cx;
+                p->ay = g.geo[VT3_TC_STICK].cy;
+            }
+        }
+        if (ctl == VT3_TC_SWIPE) {
+            if (!vt3_swipe_begin(&g.swipe, id, lx, ly, now_ms())) { p->used = 0; p->ctl = -1; return; }
+            VT3_CDEBUG("touch", "swipe gesture started (pointer %d)", id);
+        }
     }
     if (down) {
         p->lx = lx;
         p->ly = ly;
+        if (p->ctl == VT3_TC_SWIPE) {
+            int dir = VT3_DPAD_NONE;
+            float min_d = g.geo[VT3_TC_SWIPE].r * g.cfg.swipe_min_dist * 2.0f;
+            if (vt3_swipe_move(&g.swipe, id, lx, ly, min_d, &dir)) {
+                g.swipe.fired = 1;
+                int c = vt3_touch_swipe_ctl(g.cfg.swipe_map, dir);
+                uint32_t bit = vt3_touch_button_mask(c);
+                if (bit) { vt3_input_set_button(bit, 1); vt3_input_set_pad_button(bit, 1); }
+                VT3_CINFO("touch", "swipe %d -> control %d", dir, c);
+            }
+        }
     } else {
+        if (p->ctl == VT3_TC_SWIPE) {
+            int dir = VT3_DPAD_NONE, fired = 0;
+            vt3_swipe_end(&g.swipe, id, &dir, &fired);
+            int c = vt3_touch_swipe_ctl(g.cfg.swipe_map, dir);
+            uint32_t bit = vt3_touch_button_mask(c);
+            if (fired && bit) { vt3_input_set_button(bit, 0); vt3_input_set_pad_button(bit, 0); }
+            if (!fired) VT3_CDEBUG("touch", "swipe cancelled");
+        }
         p->used = 0;
+        p->ctl = -1;
     }
     apply_state();
 }
@@ -519,6 +688,29 @@ void vt3_touch_pointer(int id, int down, float x, float y)
 void vt3_touch_release_all(void)
 {
     release_state();
+}
+
+/* The guest's draw profile: a menu draws a fraction of what a rally does. The ring keeps the
+ * session's own high-water mark, so no fixed threshold has to be tuned per device. */
+void vt3_touch_note_draws(int draws)
+{
+    if (draws < 0) draws = 0;
+    g.draws_ring[g.draws_at] = (unsigned)draws;
+    g.draws_at = (g.draws_at + 1) % 64;
+    if ((unsigned)draws > g.draws_max) g.draws_max = (unsigned)draws;
+    /* Forget the high-water mark slowly, so one heavy frame does not keep the controls in match
+     * mode through an entire menu. */
+    if ((g.draws_at & 15) == 0 && g.draws_max > 8) g.draws_max = g.draws_max * 15u / 16u;
+
+    unsigned sum = 0;
+    for (int i = 0; i < 64; i++) sum += g.draws_ring[i];
+    unsigned avg = sum / 64u;
+    int menu = g.draws_max > 12 && avg * 4u < g.draws_max;
+    if (menu != g.guest_menu) {
+        g.guest_menu = menu;
+        VT3_CINFO("touch", "guest looks like a %s (avg %u draws, peak %u)",
+                  menu ? "menu" : "match", avg, g.draws_max);
+    }
 }
 
 /* ---- drawing -------------------------------------------------------------- */
@@ -542,8 +734,8 @@ static void draw_pill(float cx, float cy, float w, float h, const char *label, f
     if (th < 1.5f) th = 1.5f;
     for (int pass = 0; pass < 2; pass++) {
         g.shadow = pass == 0;
-        emit_round_rect(x, y, w, h, rad, h, fill);            /* solid rounded rect */
-        emit_round_rect(x, y, w, h, rad, th, stroke);         /* its outline */
+        emit_round_rect(x, y, w, h, rad, h, fill);
+        emit_round_rect(x, y, w, h, rad, th, stroke);
         emit_text(label, cx, cy - 4.0f * px, px, text, 1);
     }
     g.shadow = 0;
@@ -562,66 +754,86 @@ static void draw_controls(void)
     uint32_t fill_p = rgba(255, 255, 255, 0.30f);
     uint32_t text   = rgba(238, 242, 250, 0.94f);
 
-    /* Thumb stick: well + ring, then the knob. */
-    int sp = g.stick_held;
-    for (int pass = 0; pass < 2; pass++) {
-        g.shadow = pass == 0;
-        emit_disc(g.stick_cx, g.stick_cy, g.stick_r - th * 0.5f, sp ? fill_p : fill);
-        emit_ring(g.stick_cx, g.stick_cy, g.stick_r, th, stroke);
-    }
-    g.shadow = 0;
-    for (int pass = 0; pass < 2; pass++) {
-        g.shadow = pass == 0;
-        emit_disc(g.knob_x, g.knob_y, g.knob_r, rgba(255, 255, 255, sp ? 0.30f : 0.16f));
-        emit_ring(g.knob_x, g.knob_y, g.knob_r, th * 0.85f, stroke);
-    }
-    g.shadow = 0;
-
-    /* A/B/X/Y diamond. */
-    static const char *ab_label = "ABXY";
-    float bpx = g.ab_r * 0.155f;
-    for (int i = 0; i < 4; i++) {
-        int ctl = CTL_A + i;
-        int pressed = (g.draw_mask & bit_for(ctl)) != 0;
-        float r = g.ab_r * (pressed ? 1.06f : 1.0f);
-        draw_disc_shape(g.ab_cx[i], g.ab_cy[i], r, accent(ctl, pressed ? 0.44f : 0.16f),
-                        accent(ctl, pressed ? 1.0f : 0.88f), th);
-        float cx = g.ab_cx[i], cy = g.ab_cy[i];
+    if (g.present[VT3_TC_STICK]) {
+        ctl_geom *q = &g.geo[VT3_TC_STICK];
+        int sp = g.stick_held;
         for (int pass = 0; pass < 2; pass++) {
             g.shadow = pass == 0;
-            emit_glyph(ab_label[i], cx - 4.0f * bpx, cy - 4.0f * bpx, bpx, text);
+            emit_disc(q->cx, q->cy, q->r - th * 0.5f, sp ? fill_p : fill);
+            emit_ring(q->cx, q->cy, q->r, th, stroke);
+        }
+        g.shadow = 0;
+        float kr = 70.0f * s * (q->r / (168.0f * s > 0.0f ? 168.0f * s : 1.0f));
+        for (int pass = 0; pass < 2; pass++) {
+            g.shadow = pass == 0;
+            emit_disc(g.knob_x, g.knob_y, kr, rgba(255, 255, 255, sp ? 0.30f : 0.16f));
+            emit_ring(g.knob_x, g.knob_y, kr, th * 0.85f, stroke);
         }
         g.shadow = 0;
     }
 
-    /* LB / RB shoulders. */
-    float spx = 5.0f * s;
-    draw_pill(g.lb_cx, g.lb_cy, g.sh_w, g.sh_h, "LB", spx,
-              (g.draw_mask & VT3_BTN_LB) ? fill_p : fill, stroke, text);
-    draw_pill(g.rb_cx, g.rb_cy, g.sh_w, g.sh_h, "RB", spx,
-              (g.draw_mask & VT3_BTN_RB) ? fill_p : fill, stroke, text);
+    static const char *ab_label = "ABXY";
+    for (int i = VT3_TC_A; i <= VT3_TC_Y; i++) {
+        if (!g.present[i]) continue;
+        ctl_geom *q = &g.geo[i];
+        int pressed = (g.draw_mask & vt3_touch_button_mask(i)) != 0;
+        float r = q->r * (pressed ? 1.06f : 1.0f);
+        draw_disc_shape(q->cx, q->cy, r, accent(i, (pressed ? 0.44f : 0.16f) * g.opacity[i]),
+                        accent(i, (pressed ? 1.0f : 0.88f) * g.opacity[i]), th);
+        float bpx = q->r * 0.155f;
+        for (int pass = 0; pass < 2; pass++) {
+            g.shadow = pass == 0;
+            emit_glyph(ab_label[i - VT3_TC_A], q->cx - 4.0f * bpx, q->cy - 4.0f * bpx, bpx, text);
+        }
+        g.shadow = 0;
+    }
 
-    /* SELECT / START pills. */
-    float tpx = 4.2f * s;
-    draw_pill(g.sel_cx, g.sel_cy, g.sel_w, g.pill_h, "SELECT", tpx,
-              (g.draw_mask & VT3_BTN_BACK) ? fill_p : fill, stroke, text);
-    draw_pill(g.st_cx, g.st_cy, g.st_w, g.pill_h, "START", tpx,
-              (g.draw_mask & VT3_BTN_START) ? fill_p : fill, stroke, text);
+    for (int i = VT3_TC_LB; i <= VT3_TC_START; i++) {
+        if (!g.present[i]) continue;
+        ctl_geom *q = &g.geo[i];
+        int pressed = (g.draw_mask & vt3_touch_button_mask(i)) != 0;
+        const char *label = i == VT3_TC_LB ? "LB" : i == VT3_TC_RB ? "RB"
+                          : i == VT3_TC_SELECT ? "SELECT" : "START";
+        float px = (i == VT3_TC_SELECT || i == VT3_TC_START ? 4.2f : 5.0f) * s * (q->h / (66.0f * s > 0.0f ? 66.0f * s : 1.0f));
+        draw_pill(q->cx, q->cy, q->w, q->h, label, px,
+                  pressed ? fill_p : fill, stroke, text);
+    }
+
+    if (g.present[VT3_TC_SWIPE]) {
+        ctl_geom *q = &g.geo[VT3_TC_SWIPE];
+        float a = g.opacity[VT3_TC_SWIPE];
+        int locked = vt3_swipe_locked(&g.swipe);
+        for (int pass = 0; pass < 2; pass++) {
+            g.shadow = pass == 0;
+            emit_disc(q->cx, q->cy, q->r, rgba(255, 255, 255, (locked ? 0.24f : 0.10f) * a));
+            emit_ring(q->cx, q->cy, q->r, th, rgba(233, 238, 247, 0.66f * a));
+        }
+        g.shadow = 0;
+        if (g.cfg.swipe_labels) {
+            static const char *lbl[4] = { "A", "B", "X", "Y" };
+            static const char *arrow[4] = { "UP", "DN", "LT", "RT" };
+            float px = 1.6f * s;
+            for (int d = 0; d < 4; d++) {
+                int c = vt3_touch_swipe_ctl(g.cfg.swipe_map, d);
+                if (c < VT3_TC_A || c > VT3_TC_Y) continue;
+                float ox = d == VT3_DPAD_LEFT ? -0.62f : d == VT3_DPAD_RIGHT ? 0.62f : 0.0f;
+                float oy = d == VT3_DPAD_UP ? -0.62f : d == VT3_DPAD_DOWN ? 0.62f : 0.0f;
+                char line[16];
+                snprintf(line, sizeof line, "%s %s", arrow[d], lbl[c - VT3_TC_A < 4 ? c - VT3_TC_A : 0]);
+                emit_text(line, q->cx + ox * q->r, q->cy + oy * q->r - 4.0f * px, px,
+                          rgba(238, 242, 250, 0.80f * a), 1);
+            }
+        }
+    }
 }
 
 void vt3_touch_frame(int drawable_w, int drawable_h)
 {
     if (!active()) {
-        if (g.enabled && !g.hidden_logged && physical_present()) {
-            g.hidden_logged = 1;
-            VT3_INFO("touch: physical keyboard or gamepad in use; on-screen controls hidden");
-        }
         release_state();
         return;
     }
 
-    g.draw_w = drawable_w;
-    g.draw_h = drawable_h;
     int lw = 0, lh = 0;
     vt3_gfx_logical_size(&lw, &lh);
     if (lw <= 0 || lh <= 0) return;
@@ -631,9 +843,19 @@ void vt3_touch_frame(int drawable_w, int drawable_h)
     g.have_view = 1;
 
     layout();
+
+    /* Mode first: a change releases whatever the old mode held, so nothing sticks. */
+    int changed = 0;
+    int before = g.mode.mode;
+    int now_mode = vt3_mode_update(&g.mode, want_dpad(), now_ms(), MENU_DWELL_MS, &changed);
+    if (changed) {
+        VT3_CINFO("touch", "stick mode %s -> %s", before == VT3_TOUCH_DPAD ? "d-pad" : "analog",
+                  now_mode == VT3_TOUCH_DPAD ? "d-pad" : "analog");
+        release_state();
+    }
+
     apply_state();
 
-    /* Draw on the back buffer, over the game's frame, with no scissor. */
     vt3_gfx_rt_bind(0);
     vt3_rect none = { 0, 0, 0, 0 };
     vt3_gfx_set_scissor(0, none);
@@ -642,4 +864,14 @@ void vt3_touch_frame(int drawable_w, int drawable_h)
     g.shadow = 0;
     draw_controls();
     if (g.vn) vt3_gfx_draw(VT3_PRIM_TRIANGLELIST, g.v, g.vn, 0);
+}
+
+int vt3_touch_mode(void)
+{
+    return g.mode.mode;
+}
+
+int vt3_touch_guest_menu(void)
+{
+    return g.guest_menu;
 }

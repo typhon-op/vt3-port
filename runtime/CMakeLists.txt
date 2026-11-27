@@ -59,6 +59,8 @@ set(VT3_CORE_COMMON
     src/audio/adx.c
     src/input/input.c
     src/ui/touch_controls.c
+    src/ui/touch_core.c
+    src/ui/touch_config.c
     src/ui/game_menu.c
 )
 if(VT3_ANDROID)

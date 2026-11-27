@@ -296,7 +296,7 @@ void vt3_menu_overlay(int drawable_w, int drawable_h)
 
 /* ---- quick menu ---------------------------------------------------------------------- */
 
-static const char *rows[] = { "Resume", "On-screen controls", "Controls guide", "Settings" };
+static const char *rows[] = { "Resume", "Touchscreen controls", "On-screen controls", "Controls guide", "Settings" };
 #define ROWS ((int)(sizeof rows / sizeof rows[0]))
 
 static int touch_on(void)
@@ -466,12 +466,17 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
                         g.open = 0;
                         break;
                     case 1:
-                        toggle_touch();
+                        g.open = 0;
+                        VT3_CINFO("menu", "opening the touchscreen controls");
+                        vt3_android_open_touch_settings();
                         break;
                     case 2:
-                        g.guide = 1;
+                        toggle_touch();
                         break;
                     case 3:
+                        g.guide = 1;
+                        break;
+                    case 4:
                         g.open = 0;
                         VT3_CINFO("menu", "opening the settings screen");
                         vt3_android_open_settings();

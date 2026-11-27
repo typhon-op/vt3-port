@@ -34,5 +34,7 @@ void vt3_menu_set_open(int open);
 
 /* Opens the Java settings screen from the native thread; implemented in android_jni.c. */
 void vt3_android_open_settings(void);
+/* The Touchscreen Controls editor, from the quick menu's Touchscreen row. */
+void vt3_android_open_touch_settings(void);
 
 #endif /* VT3_MENU_H */

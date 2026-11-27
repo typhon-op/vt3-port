@@ -285,6 +285,7 @@ void d3d9_gpu_present(void)
     vt3_platform_drawable_size(&w, &h);
     /* The quick menu runs its own present loop while it is open, so the guest thread waits here:
      * that is what makes it a pause. It returns at once when the menu is closed. */
+    vt3_touch_note_draws(d3d9_frame_draws);   /* menus draw far less than a rally */
     vt3_menu_handle(w, h);
     vt3_touch_frame(w, h);         /* on-screen controls, drawn over the game's frame */
     vt3_menu_overlay(w, h);        /* FPS and temperatures, over the game and under the controls */

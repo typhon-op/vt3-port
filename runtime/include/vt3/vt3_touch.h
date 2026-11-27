@@ -26,6 +26,16 @@ void vt3_touch_pointer(int id, int down, float x, float y);
 /* Release every pointer (ACTION_CANCEL, focus loss, window teardown). */
 void vt3_touch_release_all(void);
 
+/* One presented frame's draw-call count. A menu draws a fraction of a rally, which is how the
+ * controls tell the game's own menus from a match without watching for Start. */
+void vt3_touch_note_draws(int draws);
+
+/* VT3_TOUCH_ANALOG or VT3_TOUCH_DPAD: the mode the stick is in right now. */
+int vt3_touch_mode(void);
+
+/* 1 while the draw profile says the guest is in one of its own menus. */
+int vt3_touch_guest_menu(void);
+
 /* Per frame: refresh the view (drawable -> logical mapping) and draw the controls. Call after the
  * game has drawn its frame and before the renderer presents, so the overlay is on top. */
 void vt3_touch_frame(int drawable_w, int drawable_h);

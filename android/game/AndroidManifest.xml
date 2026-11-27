@@ -39,6 +39,10 @@
             android:taskAffinity="" android:excludeFromRecents="true" />
         <!-- Settings -> Diagnostics: logs, the TXT report and its save/share actions. Not exported:
              only this app opens it. -->
+        <activity android:name="net.vt3port.game.TouchControls" android:exported="false"
+            android:label="Touchscreen Controls" />
+        <activity android:name="net.vt3port.game.TouchPreview" android:exported="false"
+            android:label="Preview" />
         <activity android:name="net.vt3port.game.Diagnostics" android:exported="false"
             android:taskAffinity="" android:excludeFromRecents="true" />
         <!-- Reads back the report copy written to the app's own cache, for the share sheet. -->

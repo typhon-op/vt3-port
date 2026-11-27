@@ -19,6 +19,19 @@ public final class Bridge {
         app = c.getApplicationContext();
     }
 
+    /** Called from android_jni.c (cached as net/vt3port/game/Bridge.openTouchSettings). */
+    static void openTouchSettings() {
+        Context c = app;
+        if (c == null) return;
+        try {
+            Intent i = new Intent(c, TouchControls.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+        } catch (RuntimeException e) {
+            DiagLog.w("app", "could not open the touchscreen controls: " + e.getMessage());
+        }
+    }
+
     /** Called from android_jni.c (cached as net/vt3port/game/Bridge.openSettings). */
     static void openSettings() {
         Context c = app;

@@ -296,6 +296,8 @@ public class Settings extends BaseActivity {
                 Markers.flag(root, "touch_mono", false),
                 on -> Markers.writeFlag(root, "touch_mono", on)));
 
+        content.addView(Ui.button(this, "Customize controls, profiles and layouts",
+                v -> startActivity(new Intent(this, TouchControls.class))));
         content.addView(Ui.button(this, getString(R.string.settings_controls_guide),
                 v -> controlsGuide()));
         content.addView(Ui.note(this, getString(R.string.settings_controls_note)));

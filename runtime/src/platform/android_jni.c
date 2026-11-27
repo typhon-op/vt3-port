@@ -17,6 +17,7 @@ static jclass g_class;
 static jmethodID g_write;
 static jclass g_bridge;
 static jmethodID g_open_settings;
+static jmethodID g_open_touch;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -47,10 +48,23 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
         if (g_bridge)
             g_open_settings = (*env)->GetStaticMethodID(env, g_bridge, "openSettings", "()V");
         if (!g_open_settings) (*env)->ExceptionClear(env);
+        if (g_bridge)
+            g_open_touch = (*env)->GetStaticMethodID(env, g_bridge, "openTouchSettings", "()V");
+        if (!g_open_touch) (*env)->ExceptionClear(env);
     } else {
         (*env)->ExceptionClear(env);
     }
     return JNI_VERSION_1_6;
+}
+
+void vt3_android_open_touch_settings(void)
+{
+    if (!g_vm || !g_bridge || !g_open_touch) return;
+    JNIEnv *env = NULL;
+    if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK || !env) return;
+    (*env)->CallStaticVoidMethod(env, g_bridge, g_open_touch);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*g_vm)->DetachCurrentThread(g_vm);
 }
 
 void vt3_android_open_settings(void)
