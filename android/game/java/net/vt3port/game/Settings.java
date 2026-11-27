@@ -46,6 +46,18 @@ public class Settings extends BaseActivity {
         showTab(TAB_GRAPHICS);
     }
 
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Bridge.screenOpened();
+    }
+
+    @Override
+    protected void onStop() {
+        Bridge.screenClosed();
+        super.onStop();
+    }
+
     View build() {
         LinearLayout page = Ui.column(this);
         page.setBackgroundColor(getColor(R.color.vt3_page));

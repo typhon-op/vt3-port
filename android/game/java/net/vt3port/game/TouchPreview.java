@@ -26,13 +26,25 @@ import java.util.Map;
 public class TouchPreview extends BaseActivity {
     TouchConfig cfg;
     PreviewView view;
-    TextView status;
+    TextView status, lockButton;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         cfg = TouchConfig.load(this);
         setContentView(build());
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Bridge.screenOpened();
+    }
+
+    @Override
+    protected void onStop() {
+        Bridge.screenClosed();
+        super.onStop();
     }
 
     View build() {
@@ -44,6 +56,19 @@ public class TouchPreview extends BaseActivity {
         head.setPadding(Ui.dp(this, 16), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
         TextView title = Ui.title(this, "PREVIEW");
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        lockButton = Ui.text(this, cfg.locked() ? "UNLOCK" : "LOCK", 12, 0xFFFFFFFF, true);
+        lockButton.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 10), Ui.dp(this, 6));
+        lockButton.setOnClickListener(v -> {
+            cfg.setI("lock", cfg.locked() ? 0 : 1);
+            cfg.save(this);
+            DiagLog.i("touch", "preview: layout " + (cfg.locked() ? "locked" : "unlocked"));
+            lockButton.setText(cfg.locked() ? "UNLOCK" : "LOCK");
+            view.sel = -1;
+            view.invalidate();
+            updateHint();
+        });
+        head.addView(lockButton);
+
         TextView back = Ui.text(this, "BACK", 12, 0xFFFFFFFF, true);
         back.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
         back.setOnClickListener(v -> finish());
@@ -60,7 +85,14 @@ public class TouchPreview extends BaseActivity {
         status = Ui.text(this, "", 11, 0xFFDCE2E8, false);
         status.setPadding(Ui.dp(this, 14), Ui.dp(this, 6), Ui.dp(this, 14), Ui.dp(this, 8));
         page.addView(status);
+        updateHint();
         return page;
+    }
+
+    void updateHint() {
+        status.setText(cfg.locked()
+                ? "Layout locked: drag disabled. Touch the controls to test the stick, buttons and swipe."
+                : "Editing: drag a control to move it, drag its orange handle to resize. Changes save on release.");
     }
 
     /** Draws and tests the layout. The geometry mirrors runtime/src/ui/touch_controls.c layout(). */
@@ -68,6 +100,10 @@ public class TouchPreview extends BaseActivity {
         float s;
         final Map<Integer, Integer> owner = new LinkedHashMap<>();   /* pointer id -> control index */
         final Map<Integer, float[]> start = new LinkedHashMap<>();   /* pointer id -> down point */
+        int sel = -1;             /* control selected for editing, -1 none */
+        int dragMode;             /* 0 none, 1 move, 2 resize */
+        int dragId = -1;
+        float grabDx, grabDy, origSize, origDist;
         int swipeDir = -1;
         boolean swipeFired;
         float lx, ly;
@@ -110,6 +146,30 @@ public class TouchPreview extends BaseActivity {
                 return new float[]{ x >= 0 ? x * W : W * 0.5f, y >= 0 ? y * H : H * 0.42f, 110 * s * size };
             }
         }
+
+        float[] handle(int i) {
+            float[] g = centre(i);
+            if (g.length == 3) return new float[]{ g[0] + g[2] * 0.72f, g[1] + g[2] * 0.72f };
+            return new float[]{ g[0] + g[3] * 0.5f, g[1] + g[4] * 0.5f };
+        }
+
+        /**
+         * Turns a built-in position into explicit fractions before the first drag, so moving a
+         * control in the Standard layout does not lose the geometry it started from. Editing a
+         * named preset copies it to Custom 1 first, so the preset itself never changes.
+         */
+        void materialise(int i) {
+            String id = TouchConfig.CTL_IDS[i];
+            if (cfg.ctlX(id) >= 0 && cfg.ctlY(id) >= 0) { cfg.detachFromPreset(); return; }
+            float[] g = centre(i);
+            float fx = getWidth() > 0 ? g[0] / getWidth() : 0.5f;
+            float fy = getHeight() > 0 ? g[1] / getHeight() : 0.5f;
+            cfg.detachFromPreset();
+            cfg.setF(cfg.key(id, "x"), fx);
+            cfg.setF(cfg.key(id, "y"), fy);
+        }
+
+        float clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
         boolean present(int i) {
             String id = TouchConfig.CTL_IDS[i];
@@ -181,6 +241,20 @@ public class TouchPreview extends BaseActivity {
                 c.drawCircle(lx, ly, 70 * s * cfg.ctlSize("stick"), p);
             }
 
+            /* Selection: an orange ring and a resize handle, so it is obvious what a drag moves. */
+            if (sel >= 0 && present(sel)) {
+                float[] g = centre(sel);
+                p.setStyle(android.graphics.Paint.Style.STROKE);
+                p.setColor(0xFFE2571F);
+                p.setStrokeWidth(Math.max(3f, 4f * s));
+                if (g.length == 3) c.drawCircle(g[0], g[1], g[2] + 8 * s, p);
+                else c.drawRoundRect(g[0] - g[3] / 2 - 8 * s, g[1] - g[4] / 2 - 8 * s,
+                        g[0] + g[3] / 2 + 8 * s, g[1] + g[4] / 2 + 8 * s, g[4] / 2, g[4] / 2, p);
+                p.setStyle(android.graphics.Paint.Style.FILL);
+                float[] h = handle(sel);
+                c.drawCircle(h[0], h[1], 18 * s, p);
+            }
+
             /* Diagnostics block. */
             text.setTextSize(22 * s * 1.2f);
             text.setColor(0xFF9FE0A8);
@@ -245,6 +319,78 @@ public class TouchPreview extends BaseActivity {
             int action = e.getActionMasked();
             int idx = e.getActionIndex();
             int id = e.getPointerId(idx);
+            if (s <= 0) s = getHeight() / 1080f;
+
+            /* Unlocked: the canvas is the editor. Locked: it is the control test. */
+            if (!cfg.locked()) {
+                switch (action) {
+                case MotionEvent.ACTION_DOWN: {
+                    float x = e.getX(idx), y = e.getY(idx);
+                    for (int i = 0; i < TouchConfig.CTL_IDS.length; i++) {
+                        if (!present(i)) continue;
+                        float[] h = handle(i);
+                        if (Math.hypot(x - h[0], y - h[1]) <= 34 * s) {
+                            sel = i;
+                            dragMode = 2;
+                            dragId = id;
+                            float[] g = centre(i);
+                            origDist = (float) Math.hypot(x - g[0], y - g[1]);
+                            origSize = cfg.ctlSize(TouchConfig.CTL_IDS[i]);
+                            materialise(i);
+                            invalidate();
+                            return true;
+                        }
+                    }
+                    int ctl = pick(x, y);
+                    if (ctl >= 0) {
+                        sel = ctl;
+                        dragMode = 1;
+                        dragId = id;
+                        float[] g = centre(ctl);
+                        grabDx = x - g[0];
+                        grabDy = y - g[1];
+                        materialise(ctl);
+                        invalidate();
+                        return true;
+                    }
+                    sel = -1;
+                    invalidate();
+                    return true;
+                }
+                case MotionEvent.ACTION_MOVE: {
+                    if (dragMode == 0 || sel < 0) return true;
+                    int pi = e.findPointerIndex(dragId);
+                    if (pi < 0) return true;
+                    float x = e.getX(pi), y = e.getY(pi);
+                    String cid = TouchConfig.CTL_IDS[sel];
+                    float[] g = centre(sel);
+                    if (dragMode == 1) {
+                        cfg.setF(cfg.key(cid, "x"), clamp((x - grabDx) / getWidth(), 0.03f, 0.97f));
+                        cfg.setF(cfg.key(cid, "y"), clamp((y - grabDy) / getHeight(), 0.03f, 0.97f));
+                    } else {
+                        float d = (float) Math.hypot(x - g[0], y - g[1]);
+                        float ns = origDist > 4 ? origSize * d / origDist : origSize;
+                        cfg.setF(cfg.key(cid, "size"), clamp(ns, 0.5f, 2.5f));
+                    }
+                    invalidate();
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_POINTER_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (dragMode != 0) {
+                        dragMode = 0;
+                        dragId = -1;
+                        boolean ok = cfg.save(TouchPreview.this);
+                        DiagLog.i("touch", "preview: control " + (sel >= 0 ? TouchConfig.CTL_IDS[sel] : "?")
+                                + (ok ? " saved" : " NOT saved"));
+                    }
+                    invalidate();
+                    return true;
+                default:
+                    return true;
+                }
+            }
 
             switch (action) {
             case MotionEvent.ACTION_DOWN:

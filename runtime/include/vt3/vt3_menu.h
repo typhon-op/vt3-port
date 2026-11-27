@@ -36,5 +36,7 @@ void vt3_menu_set_open(int open);
 void vt3_android_open_settings(void);
 /* The Touchscreen Controls editor, from the quick menu's Touchscreen row. */
 void vt3_android_open_touch_settings(void);
+/* 1 while a Java settings/editor/preview screen is up, so the menu can hold the pause. */
+int  vt3_android_screen_open(void);
 
 #endif /* VT3_MENU_H */

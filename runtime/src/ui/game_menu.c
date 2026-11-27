@@ -59,6 +59,7 @@ static struct {
     int open;
     int guide;              /* the controls guide page is showing */
     int sel;
+    int wait_screen;        /* a Java settings/editor screen is on top: hold the pause */
     char dir[512];          /* VT3_SETTINGS_DIR, where the temperature markers live */
     char cpu[24], bat[24], src[64], therm[24];
     uint64_t sample_at;
@@ -431,6 +432,21 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
     }
 
     while (g.open) {
+        /* One of the app's own screens (settings, the touch editor, the preview) is on top. The
+         * guest stays blocked in this loop while it is, which is what keeps the match paused
+         * behind it; nothing is drawn, because the window belongs to the activity meanwhile. */
+        if (g.wait_screen) {
+            if (!vt3_android_screen_open()) {
+                g.wait_screen = 0;
+                const vt3_input_state *s2 = vt3_input_get();
+                g.prev_buttons = vt3_input_pad_buttons() | (s2 ? s2->buttons : 0);
+                VT3_CINFO("menu", "app screen closed; still paused in the quick menu");
+            } else {
+                struct timespec ts = { 0, 16000000 };
+                nanosleep(&ts, NULL);
+            }
+            continue;
+        }
         menu_present(drawable_w, drawable_h);
 
         const vt3_input_state *st = vt3_input_get();
@@ -466,8 +482,9 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
                         g.open = 0;
                         break;
                     case 1:
-                        g.open = 0;
-                        VT3_CINFO("menu", "opening the touchscreen controls");
+                        vt3_touch_release_all();
+                        VT3_CINFO("menu", "opening the touchscreen controls (match stays paused)");
+                        g.wait_screen = 1;
                         vt3_android_open_touch_settings();
                         break;
                     case 2:
@@ -477,8 +494,9 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
                         g.guide = 1;
                         break;
                     case 4:
-                        g.open = 0;
-                        VT3_CINFO("menu", "opening the settings screen");
+                        vt3_touch_release_all();
+                        VT3_CINFO("menu", "opening the settings screen (match stays paused)");
+                        g.wait_screen = 1;
                         vt3_android_open_settings();
                         break;
                     default:

@@ -370,6 +370,18 @@ public class TouchControls extends BaseActivity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        Bridge.screenOpened();
+    }
+
+    @Override
+    protected void onStop() {
+        Bridge.screenClosed();
+        super.onStop();
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         // Leaving the editor saves and re-locks, so the layout cannot be nudged in a match.

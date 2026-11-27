@@ -12,8 +12,21 @@ import android.content.Intent;
  */
 public final class Bridge {
     private static volatile Context app;
+    private static int openScreens;
 
     private Bridge() {}
+
+    /**
+     * The settings, editor and preview screens count themselves in here while they are started.
+     * The runtime polls it (android_jni.c) and keeps the guest thread blocked in the quick menu
+     * for as long as one is up, so the match stays paused behind the editor instead of running on.
+     */
+    static synchronized void screenOpened() { openScreens++; }
+
+    static synchronized void screenClosed() { openScreens = Math.max(0, openScreens - 1); }
+
+    /** Called from android_jni.c (cached as net/vt3port/game/Bridge.screenOpen). */
+    static synchronized boolean screenOpen() { return openScreens > 0; }
 
     static void attach(Context c) {
         app = c.getApplicationContext();

@@ -18,6 +18,7 @@ static jmethodID g_write;
 static jclass g_bridge;
 static jmethodID g_open_settings;
 static jmethodID g_open_touch;
+static jmethodID g_screen_open;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
 {
@@ -51,10 +52,30 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
         if (g_bridge)
             g_open_touch = (*env)->GetStaticMethodID(env, g_bridge, "openTouchSettings", "()V");
         if (!g_open_touch) (*env)->ExceptionClear(env);
+        if (g_bridge)
+            g_screen_open = (*env)->GetStaticMethodID(env, g_bridge, "screenOpen", "()Z");
+        if (!g_screen_open) (*env)->ExceptionClear(env);
     } else {
         (*env)->ExceptionClear(env);
     }
     return JNI_VERSION_1_6;
+}
+
+/* 1 while one of the app's own screens (settings, the touch editor, the preview) is started. The
+ * quick menu keeps the guest blocked while this is true, so the match does not run behind them. */
+int vt3_android_screen_open(void)
+{
+    if (!g_vm || !g_bridge || !g_screen_open) return 0;
+    JNIEnv *env = NULL;
+    jint rc = (*g_vm)->GetEnv(g_vm, (void **)&env, JNI_VERSION_1_6);
+    if (rc == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK || !env) return 0;
+    } else if (rc != JNI_OK || !env) {
+        return 0;
+    }
+    jboolean open = (*env)->CallStaticBooleanMethod(env, g_bridge, g_screen_open);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); return 0; }
+    return open == JNI_TRUE;
 }
 
 void vt3_android_open_touch_settings(void)
