@@ -220,14 +220,23 @@ static void guest_thread_done(void *arg)
 /* Runs on the new launch's thread, which is the only thread left, so the arena and the tables can
  * be released here safely. The wait is bounded: a teardown that never finishes must not deadlock
  * the next match, and the log says so if it happens. */
-static void release_previous_match(void)
+static int release_previous_match(void)
 {
     for (int i = 0; i < 500 && atomic_load(&g_guest_thread_alive); i++) usleep(10 * 1000);
-    if (atomic_load(&g_guest_thread_alive))
-        VT3_CWARN("app", "the previous match's thread is still running after 5 s; releasing anyway");
+    if (atomic_load(&g_guest_thread_alive)) {
+        /* That thread may still be running guest code on the arena and reading the import table.
+         * Unmapping or freeing either would turn a stuck thread into a crash, so nothing is
+         * released and this launch is refused: the caller logs and closes the activity. */
+        VT3_CERROR("app", 0,
+                   "refusing to start a match: the previous match's thread is still running after "
+                   "5 s, so the guest arena and recompiler tables were left untouched. Close the "
+                   "app (main menu -> Quit) and launch it again.");
+        return -1;
+    }
     vt3_runtime_forget();
     vt3_guest_shutdown();
     VT3_CINFO("app", "previous match released: guest arena unmapped, recompiler tables freed");
+    return 0;
 }
 
 static void forget_marker_env(void)
@@ -245,7 +254,13 @@ static void forget_marker_env(void)
 
 void android_main(struct android_app *app)
 {
-    if (g_launch++ > 0) release_previous_match();
+    if (g_launch++ > 0 && release_previous_match() != 0) {
+        /* Nothing was freed, so this activity must not run the game: it would allocate a second
+         * runtime over a match that never stopped. Close it and leave the process to the menu. */
+        VT3_CINFO("app", "match launch refused; returning to the menu");
+        ANativeActivity_finish(app->activity);
+        return;
+    }
 
     pthread_cleanup_push(guest_thread_done, NULL);
     atomic_store(&g_guest_thread_alive, 1);

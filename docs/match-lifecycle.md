@@ -40,6 +40,13 @@ The next `android_main` (a new thread, started by the new NativeActivity) sees
   the menu between matches reaches the next one (previously `setenv(..., 0)` kept
   the old value for the whole process).
 
+If the flag has not cleared after the 5 s wait, the launch is **refused**: the arena stays
+mapped and the recompiler tables are left in place, because that thread may still be executing
+guest code on them and unmapping would crash. The log says so
+(`refusing to start a match: the previous match's thread is still running after 5 s...`), the game
+activity is finished immediately, and the user is back on the main menu, where **Quit** ends the
+process cleanly.
+
 There is never more than one guest thread: the old one is gone before the new one
 starts, and the arena is released between them rather than reused.
 
