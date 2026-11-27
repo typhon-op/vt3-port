@@ -248,3 +248,27 @@ This section was added after the fixes below were written; §1–§5 stay as the
   progress-name parameter, `direct_ready`).
 - **Still unverified:** a real device launching the game from an external folder. The host test
   (`tools/installtest/InstallHostTest.java`) covers the decisions, not the launch.
+
+## 7. Device report: a valid folder left Install disabled
+
+Found on hardware, which the host test cannot see:
+
+- The folder was recognised and the screen said the game would be read from
+  `/storage/emulated/0/Download/VIRTUA.TENNIS.3/VIRTUA.TENNIS.3/VIRTUA.TENNIS.3`, yet **Install stayed
+  disabled** until a disc image and then VT3.exe were picked by hand.
+- Cause: the button asked `hasGame() && hasExe()`, and `GameFolder.exeNear()` looked for VT3.exe only
+  in the data folder and its **immediate parent**. That layout keeps the executable at the top of the
+  archive, two levels above the folder that validated (some repacks keep it in a `bin/` below the
+  data instead), so no executable was ever found and nothing could enable the button.
+- The space figure had the same origin: with no executable found the choice never became a plan, and
+  the destination gate answered for a copy (the measured size) rather than for the direct read the
+  screen had just announced.
+- Fix: the button and the space gate now both come from the plan -- `InstallPlan.forSource()` and
+  `readyToInstall()` -- so a valid DIRECT, COPY_FOLDER or COPY_TREE choice enables Install as soon as
+  the executable is known, and direct mode asks only for the 64 MB image headroom. Executable
+  discovery searches the data folder's first subfolders and the three archive levels above it; a
+  folder with no executable keeps the button off and now says why. `selectFolder()` only claims
+  "used where it lies" when the folder really is writable, so a copy fallback is never described as
+  a direct read.
+- Regression test: `folderAloneEnablesInstall()` in `tools/installtest/InstallHostTest.java`, which
+  builds the nested archive above and fails on the old lookup.

@@ -250,7 +250,11 @@ public class Installer extends Activity {
             exeState.setText(getString(R.string.exe_found, exe.getName()));
             exeState.setTextColor(getColor(R.color.vt3_ball));
         }
-        status.setText(getString(R.string.source_using, dataRoot.getAbsolutePath()));
+        /* Said as the plan will do it: a folder the app may not write is copied, not read in
+         * place, and claiming otherwise here is what made the old space figure look wrong. */
+        status.setText(TreeFiles.writable(dataRoot)
+                ? getString(R.string.source_using, dataRoot.getAbsolutePath())
+                : getString(R.string.source_read_only, dataRoot.getAbsolutePath()));
     }
 
     /* ---- storage UI ---- */
@@ -286,12 +290,30 @@ public class Installer extends Activity {
         } else {
             sourceState.setText(R.string.source_disc);
         }
+        /* A folder that validated but has no VT3.exe anywhere near it: say why Install stays off. */
+        if (!source.hasExe() && (source.folder != null || source.treeUri != null))
+            exeState.setText(R.string.exe_needed);
         destState.setText(destDir == null ? getString(R.string.dest_default) : destDir.getAbsolutePath());
         installButton.setEnabled(canInstall());
     }
 
+    /** The button follows the plan the current choice would run, not the ISO/EXE steps. */
     boolean canInstall() {
-        return !busy && source.hasGame() && source.hasExe();
+        return !busy && InstallPlan.readyToInstall(source, folderWritable(), copyDest());
+    }
+
+    /** A chosen folder the app may also write, which is what makes the plan direct. */
+    boolean folderWritable() {
+        return source.folder != null && TreeFiles.writable(new File(source.folder));
+    }
+
+    String copyDest() {
+        return new File(destDir != null ? destDir : root, "data2").getAbsolutePath();
+    }
+
+    /** The plan the screen is showing; the install recomputes it with the real byte counts. */
+    InstallPlan screenPlan() {
+        return InstallPlan.forSource(source, folderWritable(), copyDest());
     }
 
     /** The system settings screen, opened only because the player asked for it. */
@@ -360,14 +382,17 @@ public class Installer extends Activity {
         });
     }
 
-    /** What the next install will need at its destination, from the source actually chosen. */
+    /**
+     * What the next install will need at its destination, taken from its plan: a folder read in
+     * place asks for the image headroom only, never the unpack of the disc image. Only a folder
+     * that has to be copied is measured, since that is the only case where its size matters.
+     */
     long gateBytes() {
-        if (source.folder != null) {
-            File f = new File(source.folder);
-            if (TreeFiles.writable(f)) return InstallPlan.SLACK;
-            return InstallPlan.copyNeed(TreeFiles.bytes(f));
-        }
-        return InstallPlan.UNPACK_BYTES;
+        InstallPlan plan = screenPlan();
+        if (plan == null) return InstallPlan.UNPACK_BYTES;
+        if (plan.mode == InstallPlan.Mode.COPY_FOLDER)
+            return InstallPlan.copyNeed(TreeFiles.bytes(new File(source.folder)));
+        return plan.needFreeBytes;
     }
 
     interface Take {

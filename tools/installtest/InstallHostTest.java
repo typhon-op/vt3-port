@@ -23,8 +23,9 @@ import java.util.List;
  * What it establishes: both accepted folder levels, case-insensitive Resource and VT3.exe
  * detection, the refusal messages, the same rule over a SAF-style listing, direct mode being chosen
  * with the selected folder as the native game root, the copy fallback for a read-only folder, the
- * space the copy will need, folder/disc switching, and that a failed or cancelled copy removes what
- * it wrote and leaves the source untouched. None of it launches the game: that needs a device.
+ * space the copy will need, that a valid unpacked folder alone enables Install (the device report),
+ * folder/disc switching, and that a failed or cancelled copy removes what it wrote and leaves the
+ * source untouched. None of it launches the game: that needs a device.
  */
 public final class InstallHostTest {
     private static int checks;
@@ -44,6 +45,7 @@ public final class InstallHostTest {
         directModePlan(tmp);
         copyFallbackPlan(tmp);
         spaceGate();
+        folderAloneEnablesInstall(tmp);
         selectionSwitching();
         copySucceeds(tmp);
         failedCopyCleansUp(tmp);
@@ -226,6 +228,88 @@ public final class InstallHostTest {
                 "an unknown size asks for the conservative gate");
         check(InstallPlan.copyNeed(100L << 30) == (100L << 30) + InstallPlan.SLACK,
                 "a huge source is gated at its real size, so the copy is refused before it starts");
+    }
+
+    /* ---- the Install button follows the plan, not the ISO/EXE steps ---- */
+
+    /**
+     * The device report: a valid unpacked folder was recognised and shown, yet Install stayed off
+     * until an ISO or VT3.exe had been picked by hand. The folder alone must be enough once its
+     * VT3.exe has been found, and a direct install must not ask for the unpack space.
+     */
+    static void folderAloneEnablesInstall(File tmp) throws IOException {
+        /* The reported layout, as nested as it gets: the data folder that was picked sits two
+         * archive levels below the one holding VT3.exe. */
+        File archive = new File(tmp, "Download/VIRTUA.TENNIS.3");
+        File middle = new File(archive, "VIRTUA.TENNIS.3");
+        File data = new File(middle, "VIRTUA.TENNIS.3");
+        Files.createDirectories(new File(data, "Resource").toPath());
+        touch(new File(data, "Resource/court.dat"));
+        touch(new File(archive, "VT3.exe"));
+        String dest = new File(tmp, "app-storage/data2").getAbsolutePath();
+
+        GameFolder.Result r = GameFolder.of(data);
+        check(r.ok() && r.root.isEmpty(), "the nested data folder is accepted as a data root");
+        File exe = GameFolder.exe(data, r);
+        if (exe == null) exe = GameFolder.exeNear(GameFolder.root(data, r)); /* what selectFolder does */
+        check(exe != null, "VT3.exe is found two archive levels above the picked data folder");
+
+        Source s = new Source();
+        s.folder(GameFolder.root(data, r).getAbsolutePath());
+        if (exe != null) s.foundExe(exe.getAbsolutePath());
+        check(s.hasGame() && s.hasExe(), "the folder alone supplies both the game and its exe");
+        check(InstallPlan.readyToInstall(s, true, dest),
+                "a valid unpacked folder alone enables Install, with no ISO and no picked exe");
+
+        InstallPlan p = InstallPlan.forSource(s, true, dest);
+        check(p != null && p.mode == InstallPlan.Mode.DIRECT, "the screen's plan is direct mode ("
+                + (p == null ? "none" : p.mode) + ")");
+        check(p != null && p.needFreeBytes == InstallPlan.SLACK,
+                "direct mode asks only for the image headroom ("
+                        + (p == null ? -1 : p.needFreeBytes) + ")");
+        check(p != null && p.needFreeBytes < InstallPlan.UNPACK_BYTES,
+                "the 4.5 GB unpack gate is not applied to a folder read in place");
+
+        /* An extracted repack keeps VT3.exe in a bin/ beside the data. */
+        File bin = new File(tmp, "repack/VT3");
+        Files.createDirectories(new File(bin, "Resource").toPath());
+        touch(new File(bin, "bin/VT3.exe"));
+        File found = GameFolder.exeNear(bin);
+        check(found != null, "VT3.exe in a shallow subfolder is found (" + found + ")");
+        Source b = new Source();
+        b.folder(bin.getAbsolutePath());
+        if (found != null) b.foundExe(found.getAbsolutePath());
+        check(InstallPlan.readyToInstall(b, true, dest), "that exe enables Install too");
+
+        /* A folder with no exe anywhere must still keep the button off. */
+        File bare = new File(tmp, "bare/VT3");
+        Files.createDirectories(new File(bare, "Resource").toPath());
+        Source n = new Source();
+        n.folder(bare.getAbsolutePath());
+        check(GameFolder.exeNear(bare) == null, "no executable is invented for a folder without one");
+        check(!InstallPlan.readyToInstall(n, true, dest),
+                "no VT3.exe anywhere keeps Install disabled");
+
+        /* The disc route still needs the image and the executable, as before. */
+        Source iso = new Source();
+        iso.iso("content://disc.iso");
+        check(!InstallPlan.readyToInstall(iso, false, dest), "a disc image alone still needs VT3.exe");
+        iso.pickedExe("content://VT3.exe");
+        check(InstallPlan.readyToInstall(iso, false, dest), "disc image plus exe is installable");
+        check(InstallPlan.forSource(iso, false, dest).mode == InstallPlan.Mode.UNPACK,
+                "the disc plan still unpacks");
+
+        /* A SAF tree that validated is installable once its exe is known. */
+        Source t = new Source();
+        t.tree("content://tree", "data2");
+        t.foundExe("/storage/emulated/0/VT3/VT3.exe");
+        InstallPlan tp = InstallPlan.forSource(t, false, dest);
+        check(tp != null && tp.mode == InstallPlan.Mode.COPY_TREE, "a SAF tree plans a copy");
+        check(InstallPlan.readyToInstall(t, false, dest), "a valid SAF tree enables Install");
+
+        Source none = new Source();
+        check(InstallPlan.forSource(none, false, dest) == null, "nothing chosen has no plan");
+        check(!InstallPlan.readyToInstall(none, false, dest), "nothing chosen keeps Install disabled");
     }
 
     /* ---- selection: the last pick wins ---- */

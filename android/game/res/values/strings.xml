@@ -49,6 +49,7 @@
     <string name="source_empty">There are no files in that folder.</string>
     <string name="exe_found">VT3.exe found in the game folder: %1$s</string>
     <string name="exe_missing">%1$s is gone. Select VT3.exe again.</string>
+    <string name="exe_needed">No VT3.exe in that folder or the archive folders above it: select it in step 2.</string>
 
     <string name="dest_button">Install folder</string>
     <string name="dest_default">App storage (no permission needed)</string>

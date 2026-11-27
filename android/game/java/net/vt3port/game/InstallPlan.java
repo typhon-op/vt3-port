@@ -76,6 +76,28 @@ final class InstallPlan {
         return sourceBytes > 0 ? sourceBytes + SLACK : UNPACK_BYTES;
     }
 
+    /**
+     * The plan the setup screen is looking at, or null when nothing is chosen. No I/O and no byte
+     * scan: the screen needs the mode and a gate, and a read-only folder's real size is measured
+     * once, by the install itself. The install recomputes this with the measured size.
+     */
+    static InstallPlan forSource(Source s, boolean writable, String copyDest) {
+        if (s.folder != null) return folder(s.folder, writable, 0, copyDest);
+        if (s.treeUri != null) return tree(copyDest);
+        if (s.isoUri != null) return iso(copyDest);
+        return null;
+    }
+
+    /**
+     * Whether Install may be pressed: a source with a plan, and the VT3.exe that image.bin is built
+     * from. A valid unpacked folder needs neither a disc image nor a separately picked executable
+     * once its own VT3.exe has been found -- or, for a read-only folder or a picked tree, once the
+     * exe has been found in it.
+     */
+    static boolean readyToInstall(Source s, boolean writable, String copyDest) {
+        return forSource(s, writable, copyDest) != null && s.hasExe();
+    }
+
     /** A SAF tree: the native side cannot open a content:// URI, so it is copied. */
     static InstallPlan tree(String dataRoot) {
         return new InstallPlan(Mode.COPY_TREE, dataRoot, UNPACK_BYTES,

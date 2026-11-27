@@ -160,14 +160,45 @@ final class GameFolder {
         return f != null && f.isFile() ? f : null;
     }
 
-    /** A VT3.exe sitting in the data root, or in the install root above it, or null. */
+    /* Where a VT3.exe is still looked for around a data root: in its first subfolders (an extracted
+     * repack keeps the exe in a bin/ beside the data), and at the top of the archive levels above
+     * it (a release nested as Download/<game>/<game>/<game>/data). Beyond that the player picks it. */
+    static final int EXE_DOWN = 2;
+    static final int EXE_UP = 3;
+
+    /**
+     * A VT3.exe that belongs to this data root, or null. Limiting the search to the data root and
+     * its immediate parent -- what this did first -- missed the common archive layout, so a folder
+     * that validated still left Install disabled: that was the reported bug.
+     */
     static File exeNear(File dataRoot) {
         if (dataRoot == null) return null;
-        String here = name(listOf(dataRoot), EXE);
-        if (here != null && new File(dataRoot, here).isFile()) return new File(dataRoot, here);
-        File up = dataRoot.getParentFile();
-        String above = up == null ? null : name(listOf(up), EXE);
-        return above != null && new File(up, above).isFile() ? new File(up, above) : null;
+        File down = exeIn(dataRoot, EXE_DOWN);
+        if (down != null) return down;
+        File up = dataRoot;
+        for (int i = 0; i < EXE_UP; i++) {
+            up = up.getParentFile();
+            if (up == null) break;
+            /* Top level only: an ancestor may be Download with thousands of folders under it. */
+            String e = name(listOf(up), EXE);
+            if (e != null && new File(up, e).isFile()) return new File(up, e);
+        }
+        return null;
+    }
+
+    /** VT3.exe in {@code dir} or, up to {@code depth} levels below it, in a subfolder. */
+    private static File exeIn(File dir, int depth) {
+        String here = name(listOf(dir), EXE);
+        if (here != null && new File(dir, here).isFile()) return new File(dir, here);
+        if (depth <= 0) return null;
+        for (String n : sorted(listOf(dir))) {
+            if (n.equalsIgnoreCase(RESOURCE)) continue; /* game data, never the exe we want next */
+            File child = new File(dir, n);
+            if (!child.isDirectory()) continue;
+            File f = exeIn(child, depth - 1);
+            if (f != null) return f;
+        }
+        return null;
     }
 
     /** Join a relative path onto a base folder; ".." is the base's parent. */
