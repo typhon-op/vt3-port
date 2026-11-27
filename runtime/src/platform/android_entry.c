@@ -267,10 +267,16 @@ void android_main(struct android_app *app)
     int rc = vt3_run(&vt3_mod, VT3_ANDROID_ROOT "/image.bin");
     VT3_CINFO("app", "game returned %d", rc);
     vt3_diag_stop();
+    /* The system is tearing the activity down (the task was swiped away): let the glue finish and
+     * do not start the menu on top of a dying activity. The next launch still runs the release
+     * handshake, because g_launch has moved on. */
+    int destroying = app->destroyRequested;
     /* The guest can leave the match on its own (its ExitProcess is redirected, but a return from
      * the entry point lands here). Leaving a match never ends the process: it goes through the same
      * teardown and lands on the main menu, which never returns. rt3_platform_request_main_menu
      * ends this thread, and the cleanup handler above releases the flag for the next launch. */
-    vt3_platform_request_main_menu();
-    pthread_cleanup_pop(1);   /* not reached; keeps the push/pop pair balanced */
+    if (!destroying) {
+        vt3_platform_request_main_menu();   /* releases the match, opens the menu, ends this thread */
+    }
+    pthread_cleanup_pop(1);   /* only reached when the activity was being destroyed */
 }
