@@ -34,24 +34,45 @@
     <string name="source_disc">Disc image (step 1)</string>
     <string name="source_tree">Folder chosen with the picker</string>
     <string name="source_not_install">%1$s does not look like an unpacked Virtua Tennis 3 folder: it has no Resource folder.</string>
-    <string name="source_using">Reading the game from %1$s.</string>
-    <string name="source_tree_ready">Folder chosen. It is copied into app storage while installing.</string>
+    <string name="source_using">Reading the game from %1$s. It is used where it lies: nothing is copied.</string>
+    <string name="source_read_only">%1$s can be read but not written. The game keeps its settings and saves there, so it is copied into app storage instead.</string>
+    <string name="source_missing">%1$s cannot be read any more (a removed card, or a deleted folder). Pick the game folder again.</string>
+    <string name="source_ambiguous">%1$s holds more than one folder with a Resource folder (%2$s). Pick the one that is the game data folder.</string>
+    <string name="source_unreadable">%1$s cannot be read. Pick the folder again.</string>
+    <string name="source_needs_access">Reading a folder outside app storage needs all files access. Grant it above, or copy the game in with the picker.</string>
+    <string name="source_tree_ready">Folder chosen. Its files are copied into app storage while installing.</string>
+    <string name="source_tree_read_only">%1$s cannot be written, so its files are copied into app storage while installing.</string>
+    <string name="source_tree_no_resource">That folder has no Resource folder, so it is not an unpacked Virtua Tennis 3 install. Pick the folder that holds Resource, or the folder that contains it.</string>
+    <string name="source_tree_ambiguous">That folder holds more than one folder with a Resource folder (%1$s). Pick the game data folder itself.</string>
     <string name="source_tree_failed">That folder could not be opened. Its permission may have been revoked: pick it again.</string>
     <string name="source_tree_lost">The folder chosen earlier is no longer accessible. Pick it again, or use the disc image.</string>
     <string name="source_empty">There are no files in that folder.</string>
+    <string name="exe_found">VT3.exe found in the game folder: %1$s</string>
+    <string name="exe_missing">%1$s is gone. Select VT3.exe again.</string>
 
     <string name="dest_button">Install folder</string>
     <string name="dest_default">App storage (no permission needed)</string>
     <string name="dest_needs_access">Choosing another install folder needs all files access. Grant it above, or keep app storage.</string>
     <string name="dest_unwritable">Cannot write to %1$s.</string>
-    <string name="dest_no_space">Not enough free space there: the install needs about 4.5 GB.</string>
+    <string name="dest_no_space">Not enough free space there: this install needs %1$s.</string>
+    <string name="dest_inside_source">The install folder cannot be inside the game folder. Choose app storage or another folder.</string>
     <string name="browse_here">Use this folder</string>
     <string name="browse_up">..</string>
     <string name="copying">Copying game files&#8230; </string>
+    <string name="copying_progress">Copying game files&#8230; %1$s of %2$s</string>
     <string name="verifying">Checking the installed files&#8230;</string>
     <string name="install_bad">Nothing was installed. The game data is incomplete.</string>
+    <string name="install_no_source">Nothing was chosen to install. Select the disc image or a game folder.</string>
+    <string name="install_no_exe">VT3.exe was not chosen. Select it, or pick the game folder that holds it.</string>
+    <string name="install_no_space">Not enough free space: this install needs %1$s and only %2$s is free.</string>
+    <string name="install_lost">The installed game data cannot be read any more. Set it up again here: nothing else on this device was deleted.</string>
+    <string name="install_incomplete">%1$s has no Resource folder, so the game would not start. Nothing was kept.</string>
+    <string name="install_cleanup_failed">Cannot clear the partial install at %1$s. Remove it, then try again.</string>
+    <string name="install_cancelled">Install cancelled. The partial copy was removed, and your own game folder was not touched.</string>
+    <string name="cancelling">Cancelling&#8230;</string>
+    <string name="cancel">Cancel install</string>
     <string name="install">Install</string>
-    <string name="install_note">Needs about 4.5 GB free. Keep the app open while it unpacks.</string>
+    <string name="install_note">An unpacked game folder needs no extra space. Unpacking the disc image needs about 4.5 GB.</string>
     <string name="legal">Requires your own copy of Virtua Tennis 3. Unofficial fan port, not affiliated with SEGA.</string>
 
     <string name="setup_running">Setup is running&#8230;</string>
@@ -68,6 +89,8 @@
     <string name="settings_restart">Apply and restart</string>
     <string name="settings_note">Resolution and frame rate are set when the renderer starts, so this relaunches the game. Press Back to close without applying.</string>
     <string name="settings_diagnostics">Diagnostics</string>
+    <string name="settings_reinstall">Change installation / reinstall</string>
+    <string name="settings_reinstall_ask">Go back to setup? The game data stays on this device; the next install can read a different folder or unpack the disc image again.</string>
 
     <!-- Diagnostics: logs, the TXT report, and the share/save actions. -->
     <string name="diagnostics_title">Diagnostics</string>

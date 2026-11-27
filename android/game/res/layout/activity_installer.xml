@@ -204,6 +204,16 @@
             android:enabled="false"
             android:text="@string/install" />
 
+        <!-- Only shown while an install runs: a multi-GB copy must be stoppable without killing the app. -->
+        <Button
+            android:id="@+id/cancel_button"
+            style="@style/Vt3Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/cancel"
+            android:visibility="gone" />
+
         <!-- A failed setup is the most useful time to read the log, so it is reachable from here too. -->
         <Button
             android:id="@+id/diagnostics_button"

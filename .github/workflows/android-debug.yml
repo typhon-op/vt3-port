@@ -306,6 +306,22 @@ jobs:
               tools/diagtest/DiagHostTest.java
           java -cp "$RUNNER_TEMP/diagjava" DiagHostTest | tee "$RUNNER_TEMP/java-test.txt"
 
+      # The unpacked-folder route: both accepted folder levels, case-insensitive detection, the
+      # direct-vs-copy decision, the space gate, selection switching, and that a failed or cancelled
+      # copy removes what it wrote. No Android runtime and no device are involved.
+      - name: Java installer test (unpacked folder)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/installjava"
+          javac -Xlint:all -d "$RUNNER_TEMP/installjava" \
+              android/game/java/net/vt3port/game/GameFolder.java \
+              android/game/java/net/vt3port/game/InstallPlan.java \
+              android/game/java/net/vt3port/game/Source.java \
+              android/game/java/net/vt3port/game/TreeFiles.java \
+              tools/installtest/InstallHostTest.java
+          java -cp "$RUNNER_TEMP/installjava" net.vt3port.game.InstallHostTest \
+              | tee "$RUNNER_TEMP/install-test.txt"
+
       # android/build_apk.py compiles jni/ (the installer), links the resources, compiles the Java
       # and signs -- around the game library, either compiled in this run or preserved.
       - name: Build the ARM64 debug APK
@@ -432,6 +448,7 @@ jobs:
             echo "----------------------"
             echo "Native diag_log_test:        PASS"
             echo "Java DiagHostTest:           PASS"
+            echo "Java InstallHostTest:        PASS"
             echo "build inputs:                PASS (${BUILD_MODE})"
             echo "zipalign -c -p 4:            PASS"
             echo "apksigner verify:            PASS (signer ${CERT_SHA256})"
@@ -449,8 +466,21 @@ jobs:
             echo "----------------"
             cat "$RUNNER_TEMP/java-test.txt"
             echo
+            echo "Installer test output"
+            echo "---------------------"
+            cat "$RUNNER_TEMP/install-test.txt"
+            echo
+            echo "Unpacked game folders"
+            echo "---------------------"
+            echo "A folder that holds Resource (or a parent with exactly one such child) is read in place:"
+            echo "nothing is copied, and <root>/game_root tells the runtime the data root (VT3_GAME_ROOT)."
+            echo "A folder the app may read but not write is copied into app storage instead, because the"
+            echo "game writes vt3.ini and its saves there. The installer test above covers both decisions,"
+            echo "but no device ran the game from an external folder in this build."
+            echo
             echo "Not covered by this workflow: running the game on a device (launch, Vulkan, audio,"
-            echo "touch controls, the diagnostics screen, saving and sharing the report)."
+            echo "touch controls, the diagnostics screen, saving and sharing the report, and a folder"
+            echo "install launched from the folder itself)."
           } > artifact/BUILD_INFO.txt
 
           cat artifact/BUILD_INFO.txt >> "$GITHUB_STEP_SUMMARY"

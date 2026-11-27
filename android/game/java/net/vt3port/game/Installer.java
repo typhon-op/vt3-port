@@ -28,16 +28,21 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Launcher. On first run the player picks their PC disc image (or an already-unpacked game folder)
- * and the v1.0.1 VT3.exe; this unpacks or copies the game data and builds image.bin in the app's
- * files dir (the VT3_ANDROID_ROOT the game reads), then writes install.ok. Every later launch goes
- * straight to the game.
+ * Launcher. On first run the player picks their PC disc image, an already-unpacked game folder, or
+ * both, plus the v1.0.1 VT3.exe; this builds image.bin in the app's files dir (the VT3_ANDROID_ROOT
+ * the game reads) and records where the game data lives, then writes install.ok. Every later launch
+ * goes straight to the game.
  *
- * Storage: the picker alone is enough, because whatever it returns is copied into real storage the
- * runtime can open. All Files Access is optional and only adds two shortcuts — reading an unpacked
- * folder where it lies, and installing to a folder of the player's choosing. No code path here reads
- * a content:// URI as if it were a path, and no install writes install.ok without first proving the
- * data it wrote is complete and readable.
+ * Two install modes, decided by {@link InstallPlan}:
+ *
+ *   folder, writable   read where it lies: nothing is copied, and {@code <root>/game_root} tells the
+ *                      runtime the data root (it reads VT3_GAME_ROOT, see android_entry.c and
+ *                      tools/recomp/rt/vt3rt.c). The folder must be writable because the game writes
+ *                      its vt3.ini and its saves there.
+ *   folder, read-only  copied into app storage instead, with the reason on the screen.
+ *   picker tree        copied: a content:// tree has no POSIX path for the native side to open,
+ *                      unless it maps to a readable real path, in which case it is used in place.
+ *   disc image         unpacked, unchanged.
  *
  * The screen is res/layout/activity_installer.xml: a court banner with the VT3 wordmark, one card
  * per file the player supplies, a storage card, the install button, and a foot strip for progress.
@@ -52,14 +57,12 @@ public class Installer extends Activity {
     /* SHA-256 of the image built from the v1.0.1 VT3.exe the port is translated from. */
     static final String IMAGE_SHA256 = "52be3cda5edb9aa536394fed656e22270d688d74e86db8602fd39a7512fc80bf";
     static final int PICK_ISO = 1, PICK_ZIP = 2, PICK_TREE = 3;
-    /* Room the unpacked game needs, with headroom for the image and the shader pack. */
-    static final long NEED_BYTES = 5L << 30;
-    static final int MAX_DEPTH = 32;
 
     File root;
-    Uri iso, zip, sourceTree;
-    File sourceDir, destDir;
-    Button isoButton, zipButton, installButton, storageButton, sourceButton, destButton, diagnosticsButton;
+    final Source source = new Source();
+    File destDir, sourceDir;
+    Button isoButton, zipButton, installButton, cancelButton, storageButton, sourceButton,
+            destButton, diagnosticsButton;
     TextView isoState, exeState, status, storageState, sourceState, destState;
     ProgressBar bar;
     static final Handler ui = new Handler(Looper.getMainLooper());
@@ -67,22 +70,32 @@ public class Installer extends Activity {
      * reports to whichever instance is on screen, and a second install never runs over the first. */
     static volatile Installer live;
     static volatile boolean busy;
+    static volatile boolean cancelRequested;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         root = getExternalFilesDir(null);
         DiagLog.i("install", "setup screen opened; data root " + root);
+        boolean lost = false;
         if (new File(root, "install.ok").exists()) {
-            DiagLog.i("install", "already installed; starting the game");
-            DiagLog.i("storage", "all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
-            launch();
-            return;
+            File data = installedDataRoot();
+            if (data != null && GameFolder.isDataRoot(data)) {
+                DiagLog.i("install", "already installed; starting the game");
+                DiagLog.i("storage", "all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
+                launch();
+                return;
+            }
+            /* The marker survived but the data behind it did not (a folder moved, a card removed).
+             * Show setup instead of launching into a failed start, and keep everything else. */
+            DiagLog.w("install", "install.ok is present but " + data + " is not a readable data root");
+            lost = true;
         }
         setContentView(R.layout.activity_installer);
         isoButton = findViewById(R.id.iso_button);
         zipButton = findViewById(R.id.exe_button);
         installButton = findViewById(R.id.install_button);
+        cancelButton = findViewById(R.id.cancel_button);
         isoState = findViewById(R.id.iso_state);
         exeState = findViewById(R.id.exe_state);
         status = findViewById(R.id.status);
@@ -97,15 +110,21 @@ public class Installer extends Activity {
         isoButton.setOnClickListener(v -> pick(PICK_ISO));
         zipButton.setOnClickListener(v -> pick(PICK_ZIP));
         installButton.setOnClickListener(v -> install());
+        cancelButton.setOnClickListener(v -> cancel());
         storageButton.setOnClickListener(v -> askAllFiles());
         sourceButton.setOnClickListener(v -> pickSource());
         destButton.setOnClickListener(v -> pickDestination());
         diagnosticsButton.setOnClickListener(v -> startActivity(new Intent(this, Diagnostics.class)));
         /* A remembered folder can be gone: unmounted card, app data cleared, folder deleted. */
         sourceDir = StorageAccess.sourcePath(this);
-        if (sourceDir != null && !StorageAccess.looksInstalled(sourceDir)) {
+        if (sourceDir != null && !GameFolder.isDataRoot(sourceDir)) {
             StorageAccess.setSourcePath(this, null);
             sourceDir = null;
+        }
+        if (sourceDir != null) {
+            source.folder(sourceDir.getAbsolutePath());
+            File exe = GameFolder.exeNear(sourceDir);
+            if (exe != null) source.foundExe(exe.getAbsolutePath());
         }
         destDir = StorageAccess.destPath(this);
         live = this;
@@ -113,8 +132,10 @@ public class Installer extends Activity {
             isoButton.setEnabled(false);
             zipButton.setEnabled(false);
             status.setText(R.string.setup_running);
+            showCancel(true);
         }
         refreshStorage();
+        if (lost) status.setText(R.string.install_lost);
     }
 
     @Override
@@ -133,7 +154,12 @@ public class Installer extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (!busy) super.onBackPressed(); /* leaving mid-install lets the system kill the unpacking */
+        if (!busy) {
+            super.onBackPressed();
+            return;
+        }
+        /* Leaving mid-install would leave a half-written tree behind: cancel it properly instead. */
+        cancel();
     }
 
     void pick(int code) {
@@ -145,34 +171,86 @@ public class Installer extends Activity {
     protected void onActivityResult(int code, int result, Intent data) {
         if (result != RESULT_OK || data == null) return;
         if (code == PICK_ISO) {
-            iso = data.getData();
+            /* The last pick wins: the folder is forgotten so it cannot override this image. */
+            source.iso(data.getData().toString());
+            sourceDir = null;
+            StorageAccess.setSourcePath(this, null);
             isoButton.setText(R.string.step1_done);
             isoState.setText(R.string.step1_done);
             isoState.setTextColor(getColor(R.color.vt3_ball));
         }
         if (code == PICK_ZIP) {
-            zip = data.getData();
+            source.pickedExe(data.getData().toString());
             zipButton.setText(R.string.step2_done);
             exeState.setText(R.string.step2_done);
             exeState.setTextColor(getColor(R.color.vt3_ball));
         }
-        if (code == PICK_TREE) {
-            Uri tree = data.getData();
-            if (tree == null) return;
-            StorageAccess.remember(this, tree, data);
-            /* Remembering is not the same as being allowed: ask the provider, now. */
-            if (StorageAccess.granted(this, tree) && StorageAccess.listable(this, tree)) {
-                sourceTree = tree;
-                sourceDir = null;
-                StorageAccess.setSourcePath(this, null);
-                status.setText(R.string.source_tree_ready);
-            } else {
-                StorageAccess.forget(this, tree);
-                sourceTree = null;
-                status.setText(R.string.source_tree_failed);
-            }
-        }
+        if (code == PICK_TREE) takeTree(data);
         refreshStorage();
+    }
+
+    /* ---- the folder routes ---- */
+
+    /**
+     * A tree from the picker. A real path the app may also write is read in place; any other tree
+     * that validates is copied; anything else is refused with the reason, and the player is asked
+     * to pick again.
+     */
+    void takeTree(Intent data) {
+        Uri tree = data.getData();
+        if (tree == null) return;
+        /* Not every provider persists grants; that must not reject an otherwise usable folder. */
+        StorageAccess.remember(this, tree, data);
+        if (!StorageAccess.listable(this, tree)) {
+            DiagLog.w("storage", "picked tree " + tree + " is not listable with the grant we were given");
+            StorageAccess.forget(this, tree);
+            status.setText(R.string.source_tree_failed);
+            return;
+        }
+        /* One resolution, whichever route follows: the real folder when the tree has a readable
+         * path, the picker's listing otherwise. Both go through GameFolder's rule. */
+        File real = StorageAccess.treePath(tree);
+        GameFolder.Result r = real != null ? GameFolder.of(real)
+                : GameFolder.resolve(new StorageAccess.SafListing(this, tree));
+        if (!r.ok()) {
+            DiagLog.i("storage", "picked tree " + tree + " refused: " + GameFolder.problemText(r));
+            StorageAccess.forget(this, tree);
+            status.setText(real != null ? problemText(real, r) : problemText(tree, r));
+            return;
+        }
+        File dataRoot = GameFolder.root(real, r);
+        /* A real path the app may also write is read where it lies. Anything else is copied: the
+         * game writes vt3.ini and its saves, and a content:// tree has no path to open. */
+        if (real != null && TreeFiles.writable(dataRoot)) {
+            selectFolder(real, r);
+            DiagLog.i("storage", "tree " + tree + " is " + dataRoot + ": read in place");
+            return;
+        }
+        source.tree(tree.toString(), r.root);
+        sourceDir = null;
+        StorageAccess.setSourcePath(this, null);
+        status.setText(real != null
+                ? getString(R.string.source_tree_read_only, dataRoot.getAbsolutePath())
+                : getString(R.string.source_tree_ready));
+        DiagLog.i("storage", "tree " + tree + " accepted for copying, data folder '"
+                + (r.root.isEmpty() ? "." : r.root) + "'"
+                + (real == null ? "" : ", " + dataRoot + " being read-only"));
+    }
+
+    void selectFolder(File pickedDir, GameFolder.Result r) {
+        File dataRoot = GameFolder.root(pickedDir, r);
+        source.folder(dataRoot.getAbsolutePath());
+        sourceDir = dataRoot;
+        StorageAccess.setSourcePath(this, dataRoot);
+        File exe = GameFolder.exe(pickedDir, r);
+        if (exe == null) exe = GameFolder.exeNear(dataRoot);
+        if (exe != null) {
+            source.foundExe(exe.getAbsolutePath());
+            zipButton.setText(R.string.step2_done);
+            exeState.setText(getString(R.string.exe_found, exe.getName()));
+            exeState.setTextColor(getColor(R.color.vt3_ball));
+        }
+        status.setText(getString(R.string.source_using, dataRoot.getAbsolutePath()));
     }
 
     /* ---- storage UI ---- */
@@ -184,15 +262,24 @@ public class Installer extends Activity {
                 : StorageAccess.asked(this) ? R.string.storage_denied_asked : R.string.storage_denied);
         storageState.setTextColor(getColor(all ? R.color.vt3_ball : R.color.vt3_muted));
         storageButton.setText(all ? R.string.storage_check : R.string.storage_allow);
-        if (sourceDir != null) {
-            sourceState.setText(getString(R.string.source_using, sourceDir.getAbsolutePath()));
-        } else if (sourceTree != null) {
-            if (StorageAccess.granted(this, sourceTree) && StorageAccess.listable(this, sourceTree)) {
+        if (source.folder != null) {
+            File f = new File(source.folder);
+            if (!GameFolder.readable(f)) {
+                sourceState.setText(getString(R.string.source_missing, source.folder));
+            } else if (TreeFiles.writable(f)) {
+                sourceState.setText(getString(R.string.source_using, source.folder));
+            } else {
+                /* Said now, not after a 4.5 GB copy has already started. */
+                sourceState.setText(getString(R.string.source_read_only, source.folder));
+            }
+        } else if (source.treeUri != null) {
+            if (StorageAccess.listable(this, Uri.parse(source.treeUri))) {
                 sourceState.setText(R.string.source_tree);
             } else {
                 /* Revoked or deleted since it was picked: say so instead of failing at the end. */
-                StorageAccess.forget(this, sourceTree);
-                sourceTree = null;
+                StorageAccess.forget(this, Uri.parse(source.treeUri));
+                source.treeUri = null;
+                source.treeChild = "";
                 sourceState.setText(R.string.source_tree_lost);
                 status.setText(R.string.source_tree_lost);
             }
@@ -204,8 +291,7 @@ public class Installer extends Activity {
     }
 
     boolean canInstall() {
-        boolean haveGame = iso != null || sourceDir != null || sourceTree != null;
-        return !busy && haveGame && zip != null;
+        return !busy && source.hasGame() && source.hasExe();
     }
 
     /** The system settings screen, opened only because the player asked for it. */
@@ -232,17 +318,7 @@ public class Installer extends Activity {
     void pickSource() {
         if (busy) return;
         if (StorageAccess.allFiles(this)) {
-            browse(StorageAccess.sharedRoot(), dir -> {
-                if (!StorageAccess.looksInstalled(dir)) {
-                    status.setText(getString(R.string.source_not_install, dir.getAbsolutePath()));
-                    return;
-                }
-                sourceDir = dir;      /* a real path: the runtime reads it in place, nothing copied */
-                sourceTree = null;
-                StorageAccess.setSourcePath(this, dir);
-                status.setText(getString(R.string.source_using, dir.getAbsolutePath()));
-                refreshStorage();
-            });
+            browse(StorageAccess.sharedRoot(), this::takeFolder);
             return;
         }
         /* No broad access: the picker's own grant is enough, and the copy lands in real storage. */
@@ -253,6 +329,18 @@ public class Installer extends Activity {
         }
     }
 
+    /** A folder from the in-app browser: validated with the same rule as a picked tree. */
+    void takeFolder(File dir) {
+        GameFolder.Result r = GameFolder.of(dir);
+        if (!r.ok()) {
+            DiagLog.i("storage", "folder " + dir + " refused: " + GameFolder.problemText(r));
+            status.setText(problemText(dir, r));
+            return;
+        }
+        selectFolder(dir, r);
+        refreshStorage();
+    }
+
     void pickDestination() {
         if (busy) return;
         if (!StorageAccess.allFiles(this)) {
@@ -261,14 +349,25 @@ public class Installer extends Activity {
             return;
         }
         browse(StorageAccess.sharedRoot(), dir -> {
-            if (StorageAccess.freeBytes(dir) < NEED_BYTES) {
-                status.setText(R.string.dest_no_space);
+            long need = gateBytes();
+            if (StorageAccess.freeBytes(dir) < need) {
+                status.setText(getString(R.string.dest_no_space, mb(need)));
                 return;
             }
             destDir = dir;
             StorageAccess.setDestPath(this, dir);
             refreshStorage();
         });
+    }
+
+    /** What the next install will need at its destination, from the source actually chosen. */
+    long gateBytes() {
+        if (source.folder != null) {
+            File f = new File(source.folder);
+            if (TreeFiles.writable(f)) return InstallPlan.SLACK;
+            return InstallPlan.copyNeed(TreeFiles.bytes(f));
+        }
+        return InstallPlan.UNPACK_BYTES;
     }
 
     interface Take {
@@ -307,86 +406,199 @@ public class Installer extends Activity {
 
     /* ---- install ---- */
 
+    void showCancel(boolean on) {
+        if (cancelButton == null) return;
+        cancelButton.setVisibility(on ? View.VISIBLE : View.GONE);
+        cancelButton.setEnabled(on);
+    }
+
+    /** Asks the running install to stop; it removes what it wrote, never the player's folder. */
+    void cancel() {
+        if (!busy) return;
+        cancelRequested = true;
+        status.setText(R.string.cancelling);
+        showCancel(false);
+        DiagLog.i("install", "cancel requested");
+    }
+
     void install() {
         if (!canInstall()) return;
+        final String folder = source.folder, tree = source.treeUri, child = source.treeChild,
+                iso = source.isoUri, exeUri = source.exeUri, exePath = source.exePath;
         busy = true;
+        cancelRequested = false;
         isoButton.setEnabled(false);
         zipButton.setEnabled(false);
         installButton.setEnabled(false);
         storageButton.setEnabled(false);
         sourceButton.setEnabled(false);
         destButton.setEnabled(false);
+        showCancel(true);
         bar.setVisibility(View.VISIBLE);
+        bar.setIndeterminate(true);
+        bar.setProgress(0);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         DiagLog.i("install", "install started; destination "
                 + (destDir != null ? destDir.getAbsolutePath() : root.getAbsolutePath())
-                + "; source " + (sourceDir != null ? sourceDir.getAbsolutePath()
-                : sourceTree != null ? sourceTree.toString()
-                : iso != null ? iso.toString() : "none")
+                + "; source " + source.describe()
+                + "; exe " + source.describeExe()
                 + "; all files access " + (StorageAccess.allFiles(this) ? "granted" : "not granted"));
-        new Thread(() -> {
-            try {
-                /* Everything below works on real paths. Prove each one is usable before touching it. */
-                File base = destDir != null ? destDir : root;
-                if (destDir != null && !StorageAccess.inAppStorage(this, destDir)
-                        && !StorageAccess.allFiles(this))
-                    throw new IOException(getString(R.string.dest_needs_access));
-                if (!base.isDirectory() && !base.mkdirs())
-                    throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
-                if (!StorageAccess.readable(base))
-                    throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
-                if (StorageAccess.freeBytes(base) < NEED_BYTES)
-                    throw new IOException(getString(R.string.dest_no_space));
-                if (sourceDir != null && !StorageAccess.looksInstalled(sourceDir))
-                    throw new IOException(getString(R.string.source_not_install, sourceDir.getAbsolutePath()));
-                if (sourceDir == null && sourceTree == null && iso == null)
-                    throw new IOException(getString(R.string.install_bad));
-                if (sourceTree != null && !(StorageAccess.granted(this, sourceTree)
-                        && StorageAccess.listable(this, sourceTree)))
-                    throw new IOException(getString(R.string.source_tree_lost));
+        new Thread(() -> run(folder, tree, child, iso, exeUri, exePath)).start();
+    }
 
-                say(getString(R.string.checking_exe));
-                buildImage();
+    void run(String folder, String treeUri, String child, String isoUri, String exeUri, String exePath) {
+        File created = null;
+        try {
+            File selected = folder == null ? null : new File(folder);
+            File copyBase = destDir != null ? destDir : root;
+            File data2 = new File(copyBase, "data2");
 
-                File data2 = new File(base, "data2");
-                if (sourceDir != null || sourceTree != null) {
-                    copyGame(data2);
-                } else {
-                    unpackDisc(data2);
-                }
-                /* The one thing worth insisting on: the tree the game looks for is really there. */
-                say(getString(R.string.verifying));
-                if (!new File(data2, "Resource").isDirectory())
-                    throw new IOException(getString(R.string.install_bad));
-                writeGameRoot(base, data2);
-                DiagLog.i("install", "game data complete at " + data2.getAbsolutePath());
-                try (FileOutputStream o = new FileOutputStream(new File(root, "install.ok"))) { o.getFD().sync(); }
-                ui.post(() -> { busy = false; Installer a = live; if (a != null) a.launch(); });
-            } catch (Throwable e) { /* an Error (OutOfMemoryError) must not kill the thread silently */
-                DiagLog.e("install", 0, "install failed", e);
-                ui.post(() -> {
-                    busy = false;
-                    Installer a = live;
-                    if (a == null) return;
-                    a.bar.setVisibility(View.GONE);
-                    a.status.setText("Setup failed: " + e.getMessage());
-                    a.isoButton.setEnabled(true);
-                    a.zipButton.setEnabled(true);
-                    a.storageButton.setEnabled(true);
-                    a.sourceButton.setEnabled(true);
-                    a.destButton.setEnabled(true);
-                    a.installButton.setEnabled(a.canInstall());
-                    a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                });
+            /* Everything below works on real paths. Prove each one is usable before touching it. */
+            if (selected != null) {
+                if (!GameFolder.isDataRoot(selected))
+                    throw new IOException(getString(R.string.source_not_install,
+                            selected.getAbsolutePath()));
+                if (!StorageAccess.inAppStorage(this, selected) && !StorageAccess.allFiles(this))
+                    throw new IOException(getString(R.string.source_needs_access));
             }
-        }).start();
+            if (destDir != null && !StorageAccess.inAppStorage(this, destDir)
+                    && !StorageAccess.allFiles(this))
+                throw new IOException(getString(R.string.dest_needs_access));
+            if (!root.isDirectory() && !root.mkdirs() && !root.isDirectory())
+                throw new IOException(getString(R.string.dest_unwritable, root.getAbsolutePath()));
+
+            /* Being able to write the folder is what decides direct mode, so a folder that is read
+             * in place is not measured: counting a 4.5 GB tree that nothing copies is wasted work. */
+            boolean writable = selected != null && TreeFiles.writable(selected);
+            long sourceBytes = 0;
+            if (selected != null && !writable) sourceBytes = TreeFiles.bytes(selected);
+            InstallPlan plan;
+            if (selected != null) {
+                plan = InstallPlan.folder(selected.getAbsolutePath(), writable, sourceBytes,
+                        data2.getAbsolutePath());
+            } else if (treeUri != null) {
+                if (!StorageAccess.listable(this, Uri.parse(treeUri)))
+                    throw new IOException(getString(R.string.source_tree_lost));
+                plan = InstallPlan.tree(data2.getAbsolutePath());
+            } else if (isoUri != null) {
+                plan = InstallPlan.iso(data2.getAbsolutePath());
+            } else {
+                throw new IOException(getString(R.string.install_no_source));
+            }
+            DiagLog.i("install", "plan: " + plan.describe());
+
+            /* The destination the operation actually writes to, and the space it actually needs. */
+            File base = plan.copies() ? copyBase : root;
+            if (plan.copies() && !base.isDirectory() && !base.mkdirs() && !base.isDirectory())
+                throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
+            if (!StorageAccess.readable(base))
+                throw new IOException(getString(R.string.dest_unwritable, base.getAbsolutePath()));
+            long free = StorageAccess.freeBytes(base);
+            if (free < plan.needFreeBytes)
+                throw new IOException(getString(R.string.install_no_space,
+                        mb(plan.needFreeBytes), mb(free)));
+
+            say(getString(R.string.checking_exe));
+            buildImage(exeUri, exePath);
+
+            switch (plan.mode) {
+                case DIRECT:
+                    /* Nothing is copied: the game reads the folder the player chose. */
+                    DiagLog.i("install", "direct mode: game data stays at " + plan.gameRoot
+                            + ", nothing copied");
+                    break;
+                case COPY_FOLDER:
+                    if (inside(selected, data2))
+                        throw new IOException(getString(R.string.dest_inside_source));
+                    if (data2.exists() && !TreeFiles.delete(data2))
+                        throw new IOException(getString(R.string.install_cleanup_failed, data2.getAbsolutePath()));
+                    created = data2;
+                    say(getString(R.string.copying) + "0 MB");
+                    TreeFiles.copy(selected, data2, sourceBytes, copyProgress(), () -> cancelRequested);
+                    break;
+                case COPY_TREE:
+                    if (data2.exists() && !TreeFiles.delete(data2))
+                        throw new IOException(getString(R.string.install_cleanup_failed, data2.getAbsolutePath()));
+                    created = data2;
+                    say(getString(R.string.copying) + "0 MB");
+                    StorageAccess.copyTree(this, Uri.parse(treeUri), child, data2, copyProgress(),
+                            () -> cancelRequested);
+                    break;
+                case UNPACK:
+                    created = data2;
+                    unpackDisc(data2, isoUri);
+                    break;
+                default:
+                    throw new IOException(getString(R.string.install_bad));
+            }
+
+            /* The one thing worth insisting on: the tree the game will read is really there. */
+            say(getString(R.string.verifying));
+            File dataRoot = new File(plan.gameRoot);
+            if (!GameFolder.isDataRoot(dataRoot))
+                throw new IOException(getString(R.string.install_incomplete,
+                        dataRoot.getAbsolutePath()));
+            writeGameRoot(plan.gameRoot);
+            DiagLog.i("install", "game data complete at " + plan.gameRoot
+                    + (plan.direct() ? " (read in place; nothing copied)" : ""));
+            try (FileOutputStream o = new FileOutputStream(new File(root, "install.ok"))) {
+                o.getFD().sync();
+            }
+            ui.post(() -> {
+                busy = false;
+                showCancel(false);
+                Installer a = live;
+                if (a != null) a.launch();
+            });
+        } catch (Throwable e) { /* an Error (OutOfMemoryError) must not kill the thread silently */
+            /* A half-copied tree must not survive: the next launch would read a mix of two sources. */
+            boolean cleaned = created == null || TreeFiles.delete(created);
+            DiagLog.e("install", 0, "install failed" + (cleaned ? "" : " (partial data left behind)"), e);
+            final String message = cancelRequested
+                    ? getString(R.string.install_cancelled)
+                    : "Setup failed: " + e.getMessage();
+            ui.post(() -> {
+                busy = false;
+                Installer a = live;
+                if (a == null) return;
+                a.bar.setVisibility(View.GONE);
+                a.status.setText(message);
+                a.isoButton.setEnabled(true);
+                a.zipButton.setEnabled(true);
+                a.storageButton.setEnabled(true);
+                a.sourceButton.setEnabled(true);
+                a.destButton.setEnabled(true);
+                a.installButton.setEnabled(a.canInstall());
+                a.showCancel(false);
+                a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            });
+        }
+    }
+
+    /** Byte progress for the foot strip: determinate when the total is known. */
+    TreeFiles.Progress copyProgress() {
+        return (bytes, total) -> {
+            final int permille = total > 0 ? (int) Math.min(1000, bytes * 1000 / total) : 0;
+            final boolean known = total > 0;
+            final String text = known
+                    ? getString(R.string.copying_progress, mb(bytes), mb(total))
+                    : getString(R.string.copying) + mb(bytes);
+            ui.post(() -> {
+                Installer a = live;
+                if (a == null) return;
+                a.bar.setIndeterminate(!known);
+                if (known) a.bar.setProgress(permille);
+                a.status.setText(text);
+            });
+        };
     }
 
     /* The disc image path: unshield unpacks the cabinets straight out of the picked descriptor. */
-    void unpackDisc(File data2) throws Exception {
+    void unpackDisc(File data2, String isoUri) throws Exception {
         ui.post(() -> bar.setIndeterminate(false));
         Runnable[] tick = new Runnable[1];
         tick[0] = () -> {
+            if (!busy || cancelRequested) return;
             int permille = progress();
             bar.setProgress(permille);
             status.setText(getString(R.string.unpacking) + permille / 10 + "%");
@@ -394,76 +606,66 @@ public class Installer extends Activity {
         };
         ui.post(tick[0]);
         int rc;
-        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(iso, "r")) {
+        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(Uri.parse(isoUri), "r")) {
             if (pfd == null) throw new IOException("That disc image cannot be opened.");
             rc = extractIso(pfd.getFd(), data2.getPath());
         } finally {
             ui.removeCallbacks(tick[0]);
         }
+        if (cancelRequested) throw new IOException("Install cancelled.");
         if (rc == -1) throw new IOException("That file is not a disc image (.iso).");
         if (rc == -2) throw new IOException("No Virtua Tennis 3 PC install files on that disc image.");
         if (rc < 0) throw new IOException("Unpacking failed. Check there is about 4.5 GB free.");
     }
 
-    /* The folder path: in place when it is already a real path, through a copy when it came from
-     * the picker. Either way this ends with a plain directory tree in real storage. */
-    void copyGame(File data2) throws IOException {
-        /* The bar is a view: the copy runs off the UI thread, so every touch of it is posted. */
-        ui.post(() -> {
-            bar.setProgress(0);
-            bar.setIndeterminate(true);
-        });
-        if (sourceDir != null) {
-            copyDir(sourceDir, data2, 0, new long[] { 0 });
-        } else {
-            StorageAccess.copyTree(this, sourceTree, data2, (bytes, name) ->
-                    say(getString(R.string.copying) + (bytes >> 20) + " MB"));
-        }
-        ui.post(() -> bar.setIndeterminate(false));
-    }
-
-    static void copyDir(File src, File dst, int depth, long[] bytes) throws IOException {
-        if (depth > MAX_DEPTH) throw new IOException("That folder is nested too deeply.");
-        File[] all = src.listFiles();
-        if (all == null) throw new IOException("Cannot read " + src.getName());
-        if (!dst.isDirectory() && !dst.mkdirs()) throw new IOException("Cannot create " + dst);
-        for (File f : all) {
-            File out = new File(dst, f.getName());
-            if (f.isDirectory()) {
-                copyDir(f, out, depth + 1, bytes);
-            } else if (f.isFile()) {
-                try (InputStream in = new FileInputStream(f); OutputStream o = new FileOutputStream(out)) {
-                    byte[] b = new byte[1 << 16];
-                    for (int n; (n = in.read(b)) > 0; ) {
-                        o.write(b, 0, n);
-                        bytes[0] += n;
-                    }
-                }
-            }
-            /* Anything else (a fifo, a socket, a device node) is not game data: skip it. */
-        }
-    }
-
-    /* The runtime reads the image from app storage and the data from game_root, which is only
-     * written when the player chose another folder. */
-    void writeGameRoot(File base, File data2) throws IOException {
+    /**
+     * The runtime reads the image from app storage and the data from game_root, which is written
+     * whenever the data root is not the default <root>/data2 -- a chosen install folder, or the
+     * player's own folder read in place.
+     */
+    void writeGameRoot(String gameRoot) throws IOException {
         File marker = new File(root, "game_root");
-        if (destDir == null) {
+        File def = new File(root, "data2");
+        if (gameRoot == null || same(gameRoot, def.getAbsolutePath())) {
             if (marker.exists() && !marker.delete()) throw new IOException("Cannot clear " + marker);
             return;
         }
         try (FileOutputStream o = new FileOutputStream(marker)) {
-            o.write(data2.getAbsolutePath().getBytes());
+            o.write(gameRoot.getBytes());
             o.getFD().sync();
         }
     }
 
-    /* VT3.exe may be picked bare or inside a zip. */
-    void buildImage() throws Exception {
+    /** The data root an installed game reads, from the marker or the default. */
+    File installedDataRoot() {
+        File marker = new File(root, "game_root");
+        if (marker.isFile()) {
+            try (InputStream in = new FileInputStream(marker)) {
+                String path = new String(readAll(in)).trim();
+                if (!path.isEmpty()) return new File(path);
+            } catch (IOException | RuntimeException e) {
+                DiagLog.w("install", "cannot read " + marker + ": " + e);
+            }
+        }
+        return new File(root, "data2");
+    }
+
+    /* VT3.exe may be picked bare or inside a zip, or found in the game folder itself. */
+    void buildImage(String exeUri, String exePath) throws Exception {
         byte[] exe;
-        try (InputStream in = getContentResolver().openInputStream(zip)) {
-            if (in == null) throw new IOException("That VT3.exe cannot be opened.");
-            exe = readAll(in);
+        if (exePath != null) {
+            File f = new File(exePath);
+            if (!f.isFile()) throw new IOException(getString(R.string.exe_missing, exePath));
+            try (InputStream in = new FileInputStream(f)) {
+                exe = readAll(in);
+            }
+        } else if (exeUri != null) {
+            try (InputStream in = getContentResolver().openInputStream(Uri.parse(exeUri))) {
+                if (in == null) throw new IOException("That VT3.exe cannot be opened.");
+                exe = readAll(in);
+            }
+        } else {
+            throw new IOException(getString(R.string.install_no_exe));
         }
         if (exe.length > 1 && exe[0] == 'P' && exe[1] == 'K') {
             byte[] found = null;
@@ -486,7 +688,7 @@ public class Installer extends Activity {
     void copyAsset(String name, File dst) throws IOException {
         File tmp = new File(dst.getPath() + ".tmp");
         try (InputStream in = getAssets().open(name); FileOutputStream o = new FileOutputStream(tmp)) {
-            byte[] b = new byte[1 << 16];
+            byte[] b = new byte[TreeFiles.CHUNK];
             for (int n; (n = in.read(b)) > 0; ) o.write(b, 0, n);
             o.getFD().sync();
         }
@@ -500,7 +702,7 @@ public class Installer extends Activity {
             long stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
             File mark = new File(root, "shaders.stamp");
             String want = Long.toString(stamp);
-            if (!mark.exists() || !want.equals(new String(readAll(new java.io.FileInputStream(mark))))) {
+            if (!mark.exists() || !want.equals(new String(readAll(new FileInputStream(mark))))) {
                 copyAsset("shaders.pack", new File(root, "shaders.pack"));
                 try (OutputStream o = new FileOutputStream(mark)) { o.write(want.getBytes()); }
             }
@@ -514,12 +716,59 @@ public class Installer extends Activity {
         finish();
     }
 
-    static void say(String s) { ui.post(() -> { Installer a = live; if (a != null) a.status.setText(s); }); }
+    /* ---- messages and small helpers ---- */
+
+    String problemText(File dir, GameFolder.Result r) {
+        String path = dir.getAbsolutePath();
+        if (GameFolder.NO_RESOURCE.equals(r.problem))
+            return getString(R.string.source_not_install, path);
+        if (GameFolder.AMBIGUOUS.equals(r.problem))
+            return getString(R.string.source_ambiguous, path, r.detail);
+        return getString(R.string.source_unreadable, path);
+    }
+
+    String problemText(Uri tree, GameFolder.Result r) {
+        if (GameFolder.NO_RESOURCE.equals(r.problem)) return getString(R.string.source_tree_no_resource);
+        if (GameFolder.AMBIGUOUS.equals(r.problem)) return getString(R.string.source_tree_ambiguous, r.detail);
+        return getString(R.string.source_tree_failed);
+    }
+
+    static void say(String s) {
+        ui.post(() -> {
+            Installer a = live;
+            if (a != null) a.status.setText(s);
+        });
+    }
+
+    static String mb(long bytes) {
+        long m = Math.round(bytes / (double) (1 << 20));
+        return m >= 1024 ? String.format(java.util.Locale.US, "%.1f GB", m / 1024.0) : m + " MB";
+    }
+
+    static boolean same(String a, String b) {
+        try {
+            return new File(a).getCanonicalPath().equals(new File(b).getCanonicalPath());
+        } catch (IOException e) {
+            return new File(a).getAbsolutePath().equals(new File(b).getAbsolutePath());
+        }
+    }
+
+    /** True when child is parent or inside it: the install must never write into the game folder. */
+    static boolean inside(File parent, File child) {
+        if (parent == null || child == null) return false;
+        try {
+            String p = parent.getCanonicalPath();
+            String c = child.getCanonicalPath();
+            return c.equals(p) || c.startsWith(p + File.separator);
+        } catch (IOException e) {
+            return child.getAbsolutePath().startsWith(parent.getAbsolutePath() + File.separator);
+        }
+    }
 
     /* Capped: VT3.exe is a few MB, and picking the 4.5 GB disc image here would run out of memory. */
     static byte[] readAll(InputStream in) throws IOException {
         ByteArrayOutputStream o = new ByteArrayOutputStream();
-        byte[] b = new byte[1 << 16];
+        byte[] b = new byte[TreeFiles.CHUNK];
         for (int n; (n = in.read(b)) > 0; ) {
             if (o.size() + n > 64 << 20) { in.close(); throw new IOException("That file is too big to be VT3.exe (over 64 MB)."); }
             o.write(b, 0, n);

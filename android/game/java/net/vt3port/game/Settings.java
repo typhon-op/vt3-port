@@ -1,6 +1,7 @@
 package net.vt3port.game;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.PowerManager;
@@ -123,6 +124,23 @@ public class Settings extends Activity {
         diagnostics.setText(R.string.settings_diagnostics);
         diagnostics.setOnClickListener(v -> startActivity(new Intent(this, Diagnostics.class)));
         box.addView(diagnostics);
+
+        /* The way back into setup: a wrong or broken install can be corrected without clearing
+         * every app file (which would also delete image.bin, the shader pack and the logs). */
+        Button reinstall = new Button(this);
+        reinstall.setText(R.string.settings_reinstall);
+        reinstall.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setMessage(R.string.settings_reinstall_ask)
+                .setPositiveButton(R.string.settings_reinstall, (d, w) -> {
+                    DiagLog.i("install", "change installation requested; clearing install.ok and game_root");
+                    new File(root, "install.ok").delete();
+                    new File(root, "game_root").delete();
+                    startActivity(new Intent(this, Installer.class));
+                    finish();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show());
+        box.addView(reinstall);
 
         setContentView(scroll);
     }
