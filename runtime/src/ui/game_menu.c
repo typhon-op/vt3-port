@@ -17,6 +17,7 @@
  * quads and cannot fail to load an asset at runtime.
  */
 #include "vt3/vt3_menu.h"
+#include "vt3/vt3_thermal.h"
 
 #include "vt3/vt3_diag.h"
 #include "vt3/vt3_input.h"
@@ -197,82 +198,6 @@ static int marker_int_or(const char *name, int def)
 /* Real readings, straight from the kernel, so the overlay works during a match with no Java
  * activity alive: the sysfs thermal zones for the CPU and the battery's own sensor. Android does
  * not guarantee every zone is readable, so a failure is reported as such, never guessed. */
-static int read_number(const char *path, long *out)
-{
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    long v = 0;
-    int ok = fscanf(f, "%ld", &v) == 1;
-    fclose(f);
-    if (!ok) return 0;
-    *out = v;
-    return 1;
-}
-
-static int read_text(const char *path, char *out, size_t cap)
-{
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    size_t n = fread(out, 1, cap - 1, f);
-    fclose(f);
-    out[n] = 0;
-    while (n && (out[n - 1] == '\n' || out[n - 1] == '\r')) out[--n] = 0;
-    return n > 0;
-}
-
-/* Some sensors report millidegrees, some decidegrees; both are normalised to whole degrees. */
-static int to_degrees(long raw)
-{
-    if (raw > 1000 || raw < -1000) return (int)(raw / 1000);
-    return (int)(raw / 10);
-}
-
-static int cpu_temperature(int *deg, char *src, size_t cap)
-{
-    const char *hints[] = { "cpu", "soc", "tsens", "ap", "cluster", "big", "little", "skin" };
-    char zone[128], path[192], type[96];
-    for (int i = 0; i < 64; i++) {
-        snprintf(zone, sizeof zone, "/sys/class/thermal/thermal_zone%d", i);
-        snprintf(path, sizeof path, "%s/temp", zone);
-        long raw;
-        if (!read_number(path, &raw)) continue;
-        snprintf(path, sizeof path, "%s/type", zone);
-        if (!read_text(path, type, sizeof type)) type[0] = 0;
-        for (int h = 0; h < (int)(sizeof hints / sizeof hints[0]); h++) {
-            if (strstr(type, hints[h])) {
-                int c = to_degrees(raw);
-                if (c > 0 && c < 130) {
-                    *deg = c;
-                    snprintf(src, cap, "%s (%.40s)", zone, type);
-                    return 1;
-                }
-                break;
-            }
-        }
-    }
-    return 0;
-}
-
-static int battery_temperature(int *deg, char *src, size_t cap)
-{
-    static const char *paths[] = {
-        "/sys/class/power_supply/battery/temp",
-        "/sys/class/power_supply/bms/temp",
-        "/sys/class/power_supply/Battery/temp"
-    };
-    for (int i = 0; i < (int)(sizeof paths / sizeof paths[0]); i++) {
-        long raw;
-        if (!read_number(paths[i], &raw)) continue;
-        int c = to_degrees(raw);
-        if (c > -40 && c < 130) {
-            *deg = c;
-            snprintf(src, cap, "%.60s", paths[i]);
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static void sample(void)
 {
     uint64_t now = now_ns();
@@ -282,14 +207,14 @@ static void sample(void)
      * device whose thermal zones are not readable and whose app can supply them. */
     int deg = 0;
     char src[96];
-    if (cpu_temperature(&deg, src, sizeof src)) {
+    if (vt3_thermal_cpu("/sys", &deg, src, sizeof src)) {
         snprintf(g.cpu, sizeof g.cpu, "%d", deg);
         snprintf(g.src, sizeof g.src, "%s", src);
     } else {
         marker("cpu_temp", g.cpu, sizeof g.cpu, "Unavailable");
         marker("cpu_temp_source", g.src, sizeof g.src, "");
     }
-    if (battery_temperature(&deg, src, sizeof src)) {
+    if (vt3_thermal_battery("/sys", &deg, src, sizeof src)) {
         snprintf(g.bat, sizeof g.bat, "%d", deg);
         g.bat_src_is_kernel = 1;
     } else {

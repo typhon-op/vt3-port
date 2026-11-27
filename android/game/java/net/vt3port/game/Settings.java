@@ -163,7 +163,7 @@ public class Settings extends BaseActivity {
             res.step(1);
             setOverride("override_res", GraphicsProfile.RES[res.index]);
         });
-        content.addView(Ui.row(this, getString(R.string.settings_resolution),
+        content.addView(Ui.row(this, (getString(R.string.settings_resolution) + " \u00b7 next match"),
                 getString(R.string.settings_resolution_hint), res));
 
         int scale = Markers.intOr(root, "override_scale", 100);
@@ -177,15 +177,15 @@ public class Settings extends BaseActivity {
             aniso.step(1);
             setOverride("override_aniso", GraphicsProfile.ANISO[aniso.index]);
         });
-        content.addView(Ui.row(this, getString(R.string.settings_aniso),
+        content.addView(Ui.row(this, (getString(R.string.settings_aniso) + " \u00b7 next match"),
                 getString(R.string.settings_aniso_hint), aniso));
 
-        content.addView(toggleRow(getString(R.string.settings_widescreen),
+        content.addView(toggleRow((getString(R.string.settings_widescreen) + " \u00b7 next match"),
                 getString(R.string.settings_widescreen_hint),
                 Markers.flag(root, "override_widescreen", true),
                 on -> { Markers.writeFlag(root, "override_widescreen", on); custom(); }));
 
-        content.addView(toggleRow(getString(R.string.settings_shadows),
+        content.addView(toggleRow((getString(R.string.settings_shadows) + " \u00b7 next match"),
                 getString(R.string.settings_shadows_hint),
                 Markers.flag(root, "override_shadows", GraphicsProfile.presetTier(preset) <= GraphicsProfile.HIGH),
                 on -> { Markers.writeFlag(root, "override_shadows", on); custom(); }));
@@ -197,7 +197,7 @@ public class Settings extends BaseActivity {
             fps.step(1);
             setOverride("override_fps", GraphicsProfile.FPS[fps.index]);
         });
-        content.addView(Ui.row(this, getString(R.string.settings_fps),
+        content.addView(Ui.row(this, (getString(R.string.settings_fps) + " \u00b7 next match"),
                 getString(R.string.settings_fps_hint), fps));
         content.addView(Ui.note(this, getString(R.string.settings_pacing_note)));
         content.addView(Ui.note(this, "Frame limit, resolution, render scale, anisotropy, shadows and "

@@ -192,6 +192,7 @@ static void reset_runtime_for_relaunch(void)
     vt3_input_clear_keys();
     d3d9_gpu_shutdown();
     vt3_dsound_shutdown();
+    vt3_diag_stop();
     VT3_CINFO("app", "runtime reset for a new match (renderer, audio, menu, touch, input)");
 }
 

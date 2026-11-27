@@ -84,6 +84,9 @@ extern uint8_t *vt_mem;
 /* Load image_path into guest memory and run the entry. Returns process status. */
 int vt3_run(const vt3_module *m, const char *image_path);
 
+/* Frees the per-match runtime tables (the import table). Only call it when no guest thread runs. */
+void vt3_runtime_forget(void);
+
 /* Guest memory access. Addresses are guest (32-bit). Little-endian host.
  *
  * The multi-byte writes go through a pointer cast, not memcpy, and that is a speed choice, not

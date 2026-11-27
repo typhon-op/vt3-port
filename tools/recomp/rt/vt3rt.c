@@ -342,6 +342,15 @@ void vt_serve_point(vt3_cpu *c, uint32_t addr)
     }
 }
 
+/* Drops the import table the last vt3_run built. Called by the launch that follows another match in
+ * this process, once that match's thread has ended, so no reader is left on the old table. */
+void vt3_runtime_forget(void)
+{
+    free(itab);
+    itab = NULL;
+    nitab = 0;
+}
+
 int vt3_run(const vt3_module *m, const char *image_path)
 {
     trace = getenv("VT3_TRACE") != NULL;

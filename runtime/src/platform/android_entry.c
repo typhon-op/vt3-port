@@ -4,6 +4,7 @@
  * VT3_ANDROID_ROOT (device storage, pushed with adb), so nothing is bundled in the APK.
  */
 #include "vt3/vt3_diag.h"
+#include "vt3/vt3_guest.h"
 #include "vt3/vt3_log.h"
 #include "vt3/vt3_platform.h"
 #include "vt3rt.h"
@@ -20,6 +21,9 @@
 
 /* Defined in src/platform/platform_android.c */
 void vt3_platform_android_attach(struct android_app *app);
+void vt3_platform_request_main_menu(void);
+
+#include <stdatomic.h>
 
 #define VT3_ANDROID_ROOT "/sdcard/Android/data/net.vt3port.game/files"
 
@@ -193,6 +197,39 @@ static void apply_game_root(void)
  * menu between matches takes effect in the next one. */
 static int g_launch;
 
+/* 1 while a guest thread is running in this process. The lifecycle in one place:
+ *
+ *   android_main (thread A)  -> vt3_run -> guest ... Exit to main menu
+ *        -> vt3_platform_request_main_menu(): renderer/audio/menu/touch/input released,
+ *           MainMenu started, game activity finished, thread A ends (pthread_exit)
+ *        -> this cleanup handler drops the flag, so thread A's stack is gone with the arena
+ *           still mapped
+ *   android_main (thread B)  -> sees g_launch > 0, waits for the flag, unmaps the guest arena and
+ *           frees the recompiler tables, then vt3_run maps a fresh arena and reloads the image:
+ *           a real cold start of the game inside the same process, with no second guest thread
+ *           and no memory carried over from the previous match.
+ */
+static atomic_int g_guest_thread_alive;
+
+static void guest_thread_done(void *arg)
+{
+    (void)arg;
+    atomic_store(&g_guest_thread_alive, 0);
+}
+
+/* Runs on the new launch's thread, which is the only thread left, so the arena and the tables can
+ * be released here safely. The wait is bounded: a teardown that never finishes must not deadlock
+ * the next match, and the log says so if it happens. */
+static void release_previous_match(void)
+{
+    for (int i = 0; i < 500 && atomic_load(&g_guest_thread_alive); i++) usleep(10 * 1000);
+    if (atomic_load(&g_guest_thread_alive))
+        VT3_CWARN("app", "the previous match's thread is still running after 5 s; releasing anyway");
+    vt3_runtime_forget();
+    vt3_guest_shutdown();
+    VT3_CINFO("app", "previous match released: guest arena unmapped, recompiler tables freed");
+}
+
 static void forget_marker_env(void)
 {
     static const char *names[] = {
@@ -208,7 +245,10 @@ static void forget_marker_env(void)
 
 void android_main(struct android_app *app)
 {
-    if (g_launch++ > 0) forget_marker_env();
+    if (g_launch++ > 0) release_previous_match();
+
+    pthread_cleanup_push(guest_thread_done, NULL);
+    atomic_store(&g_guest_thread_alive, 1);
 #ifdef VT3_PGO_GEN
     pthread_t pgo;
     pthread_create(&pgo, NULL, pgo_dump, NULL);
@@ -225,14 +265,12 @@ void android_main(struct android_app *app)
     setenv("VT3_SHADER_PACK", VT3_ANDROID_ROOT "/shaders.pack", 1);
     VT3_CINFO("app", "running the game from %s", VT3_ANDROID_ROOT);
     int rc = vt3_run(&vt3_mod, VT3_ANDROID_ROOT "/image.bin");
-    VT3_CINFO("app", "game returned %d; shutting down", rc);
+    VT3_CINFO("app", "game returned %d", rc);
     vt3_diag_stop();
-    /* Close the activity and end the process, so a relaunch never runs over stale statics. */
-    ANativeActivity_finish(app->activity);
-    while (!app->destroyRequested) {
-        int events = 0;
-        struct android_poll_source *source = NULL;
-        if (ALooper_pollOnce(-1, NULL, &events, (void **)&source) >= 0 && source) source->process(app, source);
-    }
-    exit(rc);
+    /* The guest can leave the match on its own (its ExitProcess is redirected, but a return from
+     * the entry point lands here). Leaving a match never ends the process: it goes through the same
+     * teardown and lands on the main menu, which never returns. rt3_platform_request_main_menu
+     * ends this thread, and the cleanup handler above releases the flag for the next launch. */
+    vt3_platform_request_main_menu();
+    pthread_cleanup_pop(1);   /* not reached; keeps the push/pop pair balanced */
 }
