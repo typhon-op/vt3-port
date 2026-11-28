@@ -241,4 +241,33 @@
     <string name="driver_keep">الإبقاء على هذه الحزمة</string>
     <string name="driver_saved">%1$s محفوظة على هذا الجهاز.</string>
     <string name="driver_save_failed">تعذّر الإبقاء على تلك الحزمة: %1$s</string>
+
+    <!-- Diagnostics. -->
+    <string name="diagnostics_title">التشخيص</string>
+    <string name="diagnostics_hint">تكتب اللعبة وهذه الشاشة سجلاً واحداً على هذا الجهاز: بدء التشغيل، ومحرك اللعبة، والمثبّت، والتخزين، وVulkan، وأزمنة الإطار، والصوت، والإدخال، ودورة حياة أندرويد. ولا يُرسَل شيء إلى أي مكان. والتقرير ملف .txt عادي يمكنك قراءته أو حفظه أو مشاركته.</string>
+    <string name="diagnostics_detail">تسجيل مفصّل (يضيف تفاصيل التصحيح؛ أطفئه بعد الانتهاء)</string>
+    <string name="diagnostics_state">الإصدار %1$s\nحجم السجل %2$s (%3$s مدخلاً، %4$s مهملاً)\nآخر تقرير %5$s\nآخر خطأ: %6$s</string>
+    <string name="diagnostics_never">أبداً</string>
+    <string name="diagnostics_no_error">لا شيء مسجّل</string>
+    <string name="diagnostics_view">عرض السجلات</string>
+    <string name="diagnostics_generate">إنشاء تقرير تشخيصي</string>
+    <string name="diagnostics_save">حفظ التقرير بصيغة TXT</string>
+    <string name="diagnostics_share">مشاركة التقرير</string>
+    <string name="diagnostics_open">فتح آخر تقرير محفوظ</string>
+    <string name="diagnostics_clear">مسح السجلات</string>
+    <string name="diagnostics_last_error">عرض آخر خطأ</string>
+    <string name="diagnostics_note">يحتوي التقرير على إصدار التطبيق وطراز الجهاز وإصدار أندرويد، وحالة التثبيت، وإحصاءات الرسوميات والإطار، وتشخيص الصوت، وأحداث دورة الحياة، وسجل الأخطاء. ولا يحتوي أبداً على محتويات ملفات أو بيانات حساب أو موقع. ومسح السجلات يحذف ملفات السجل وسجلات الأعطال فقط، لا اللعبة.</string>
+    <string name="diagnostics_no_log">السجل لا يعمل.</string>
+    <string name="diagnostics_empty_log">السجل فارغ.</string>
+    <string name="diagnostics_generated">التقرير جاهز: %1$s (%2$d حرفاً).</string>
+    <string name="diagnostics_no_picker">لا يوجد منتقي مستندات على هذا الجهاز، لذا لا يمكن حفظ التقرير.</string>
+    <string name="diagnostics_shared">مشاركة تقرير بحجم %1$d بايت.</string>
+    <string name="diagnostics_share_failed">فشلت المشاركة: %1$s</string>
+    <string name="diagnostics_nothing_saved">لم يُحفظ أي تقرير بعد.</string>
+    <string name="diagnostics_no_viewer">لا يوجد تطبيق على هذا الجهاز يفتح ملفاً نصياً.</string>
+    <string name="diagnostics_clear_ask">حذف ملفات السجل وسجل آخر خطأ وسجلات الأعطال من هذا الجهاز؟ اللعبة وبياناتها لا تُمس.</string>
+    <string name="diagnostics_cleared">مُسحت السجلات. لم تُمس بيانات اللعبة.</string>
+    <string name="diagnostics_save_cancelled">أُلغي الحفظ: لم يُكتب أي ملف.</string>
+    <string name="diagnostics_saved">حُفظ التقرير وتُحقّق منه: %1$d بايت، قابل للقراءة.</string>
+    <string name="diagnostics_save_failed">تعذّر حفظ التقرير: %1$s</string>
 </resources>

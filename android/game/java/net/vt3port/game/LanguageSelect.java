@@ -81,8 +81,9 @@ public class LanguageSelect extends BaseActivity {
         select(index);
         Lang.set(this, Lang.CODES[index]);
         DiagLog.i("app", "language set to " + Lang.CODES[index]);
-        /* The whole stack is recreated so every screen, including this one, is in the new
-         * language; the choice is a marker, so nothing is lost. */
+        /* This screen is rebuilt now; the screens already behind it rebuild themselves in
+         * BaseActivity.onResume, so the menu is in the new language as soon as it is shown. The
+         * choice is a marker, so nothing is lost. */
         recreate();
     }
 

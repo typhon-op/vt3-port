@@ -1,6 +1,5 @@
 package net.vt3port.game;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
@@ -37,7 +36,7 @@ import java.util.Locale;
  *
  * No button is decorative and nothing claims success without checking.
  */
-public class Diagnostics extends Activity {
+public class Diagnostics extends BaseActivity {
     static final int SAVE = 101;
     static final String LAST_URI = "last_report_uri";
 
