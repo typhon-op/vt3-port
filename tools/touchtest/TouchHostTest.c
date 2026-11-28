@@ -136,6 +136,72 @@ static void test_repeat_timing(void)
     check(vt3_repeat_update(&s, VT3_DPAD_LEFT, 800, &t) == 0, "and repeats on its own schedule");
 }
 
+/* 7. Telling the game's own menus from a match: menu mode hangs on this. */
+static void test_menu_detect(void)
+{
+    vt3_menu_detect_state s;
+
+    /* Cold start: the boot, title, option and tour menus all come before any match has been seen,
+     * so a rule that needs a remembered match peak never switches for them. */
+    memset(&s, 0, sizeof s);
+    int menu = 0;
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES - 1; i++) menu = vt3_menu_detect_update(&s, 9);
+    check(menu == 0, "a handful of quiet frames is not a menu yet");
+    check(vt3_menu_detect_update(&s, 9) == 1, "the pre-match menus are caught with nothing to compare");
+    int stayed = 1;
+    for (int i = 0; i < 600; i++) stayed &= vt3_menu_detect_update(&s, 9);
+    check(stayed, "a menu stays a menu over ten seconds of quiet frames");
+
+    /* A menu that draws more, but still under the rally level: this is what the old peak ratio
+     * lost, because the peak decays away while the menu is still on screen. */
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES; i++) vt3_menu_detect_update(&s, 90);
+    check(s.menu == 1, "a menu drawing just under the rally level is still a menu");
+
+    /* A match: rally frames, and no number of them reads as a menu. */
+    memset(&s, 0, sizeof s);
+    stayed = 1;
+    for (int i = 0; i < 600; i++) stayed &= !vt3_menu_detect_update(&s, 240);
+    check(stayed, "a rally never reads as a menu");
+
+    /* A few light frames inside a match (a fade, a cut) do not flip it... */
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES - 1; i++) vt3_menu_detect_update(&s, 20);
+    check(s.menu == 0, "a short quiet patch in a match is not a menu");
+    /* ...and one rally frame cancels the run, so it has to start again. */
+    vt3_menu_detect_update(&s, 240);
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES - 1; i++) vt3_menu_detect_update(&s, 20);
+    check(s.menu == 0, "a rally frame cancels a quiet run");
+
+    /* The menus after a point, and the next rally. */
+    for (int i = 0; i < 40; i++) vt3_menu_detect_update(&s, 20);
+    check(s.menu == 1, "the game's own menus after a point are caught");
+    check(vt3_menu_detect_update(&s, 240) == 1, "one rally frame does not flip a menu back at once");
+    check(vt3_menu_detect_update(&s, 240) == 0, "two rally frames in a row do");
+
+    /* The level: at or over it is a rally, under it is quiet. */
+    memset(&s, 0, sizeof s);
+    stayed = 1;
+    for (int i = 0; i < 300; i++)
+        stayed &= !vt3_menu_detect_update(&s, VT3_MENU_DETECT_MATCH_DRAWS);
+    check(stayed, "a frame exactly at the level counts as a rally");
+
+    /* A device can move the level (VT3_TOUCH_MATCH_DRAWS), for a build whose menus draw more. */
+    memset(&s, 0, sizeof s);
+    s.match_draws = 200;
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES; i++) vt3_menu_detect_update(&s, 150);
+    check(s.menu == 1, "the rally level is adjustable");
+
+    /* A black screen or a load is not a match either. */
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES; i++) vt3_menu_detect_update(&s, 0);
+    check(s.menu == 1, "a black screen reads as quiet");
+
+    /* Negative counts are treated as zero rather than wrapping a counter. */
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < VT3_MENU_DETECT_MENU_FRAMES; i++) vt3_menu_detect_update(&s, -1);
+    check(s.menu == 1, "a negative draw count cannot wrap the run");
+}
+
 /* 6. The original button mappings, unchanged. */
 static void test_button_table(void)
 {
@@ -423,6 +489,7 @@ int main(void)
     test_profiles();
     test_mapping();
     test_config();
+    test_menu_detect();
     printf("%d checks, %d failure%s\n", checks, failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

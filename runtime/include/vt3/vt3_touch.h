@@ -31,6 +31,8 @@ void vt3_touch_release_all(void);
 
 /* One presented frame's draw-call count. A menu draws a fraction of a rally, which is how the
  * controls tell the game's own menus from a match without watching for Start. */
+/* One presented frame's draw count: how the overlay tells the game's own menus from a match (see
+ * vt3_menu_detect_update in vt3_touch_core.h). */
 void vt3_touch_note_draws(int draws);
 
 /* VT3_TOUCH_ANALOG or VT3_TOUCH_DPAD: the mode the stick is in right now. */

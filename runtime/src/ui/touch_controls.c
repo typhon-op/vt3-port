@@ -84,10 +84,8 @@ static struct {
     uint32_t dpad_until_ms;
     int      last_dir;
 
-    /* Draw calls per presented frame, for telling a menu from a match (see guest_in_menu). */
-    unsigned draws_ring[64];
-    int      draws_at;
-    unsigned draws_max;
+    /* Draw calls per presented frame, for telling a menu from a match (vt3_menu_detect_update). */
+    vt3_menu_detect_state detect;
     int      guest_menu;
     int      menu_pad;      /* menu mode: the compact d-pad + A/B layout is on screen */
 
@@ -326,11 +324,9 @@ void vt3_touch_reset(void)
     g.inited = 0;
     g.have_view = 0;
     g.logical_w = g.logical_h = 0;
-    g.draws_at = 0;
-    g.draws_max = 0;
+    memset(&g.detect, 0, sizeof g.detect);
     g.guest_menu = 0;
     g.menu_pad = 0;
-    memset(g.draws_ring, 0, sizeof g.draws_ring);
     free(g.v);
     g.v = NULL;
     g.vcap = g.vn = 0;
@@ -800,22 +796,22 @@ void vt3_touch_release_all(void)
  * session's own high-water mark, so no fixed threshold has to be tuned per device. */
 void vt3_touch_note_draws(int draws)
 {
-    if (draws < 0) draws = 0;
-    g.draws_ring[g.draws_at] = (unsigned)draws;
-    g.draws_at = (g.draws_at + 1) % 64;
-    if ((unsigned)draws > g.draws_max) g.draws_max = (unsigned)draws;
-    /* Forget the high-water mark slowly, so one heavy frame does not keep the controls in match
-     * mode through an entire menu. */
-    if ((g.draws_at & 15) == 0 && g.draws_max > 8) g.draws_max = g.draws_max * 15u / 16u;
+    if (!g.detect.match_draws) {
+        /* VT3_TOUCH_MATCH_DRAWS overrides the rally level, for a device whose frames do not sit
+         * where the measured ones did (a match measured 197-390 draws a frame). */
+        const char *e = getenv("VT3_TOUCH_MATCH_DRAWS");
+        g.detect.match_draws = (e && *e && atoi(e) > 0) ? (unsigned)atoi(e)
+                                                       : VT3_MENU_DETECT_MATCH_DRAWS;
+        VT3_CINFO("touch", "menu detection: a frame is a rally at %u draws", g.detect.match_draws);
+    }
 
-    unsigned sum = 0;
-    for (int i = 0; i < 64; i++) sum += g.draws_ring[i];
-    unsigned avg = sum / 64u;
-    int menu = g.draws_max > 12 && avg * 4u < g.draws_max;
+    int menu = vt3_menu_detect_update(&g.detect, draws);
     if (menu != g.guest_menu) {
         g.guest_menu = menu;
-        VT3_CINFO("touch", "guest looks like a %s (avg %u draws, peak %u)",
-                  menu ? "menu" : "match", avg, g.draws_max);
+        VT3_CINFO("touch", "guest looks like a %s (%d draws, %u %s frames)",
+                  menu ? "menu" : "match", draws < 0 ? 0 : draws,
+                  menu ? g.detect.light_run : g.detect.heavy_run,
+                  menu ? "quiet" : "rally");
     }
 }
 

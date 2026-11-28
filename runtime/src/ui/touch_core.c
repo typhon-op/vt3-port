@@ -216,3 +216,21 @@ int vt3_touch_pick(const int *candidates, const float *dist, int n, uint32_t own
     }
     return best;
 }
+
+int vt3_menu_detect_update(vt3_menu_detect_state *s, int draws)
+{
+    if (!s) return 0;
+    if (draws < 0) draws = 0;
+    unsigned level = s->match_draws ? s->match_draws : VT3_MENU_DETECT_MATCH_DRAWS;
+
+    if ((unsigned)draws >= level) {
+        if (s->heavy_run < 0xFFFFu) s->heavy_run++;
+        s->light_run = 0;
+        if (s->menu && s->heavy_run >= VT3_MENU_DETECT_MATCH_FRAMES) s->menu = 0;
+    } else {
+        if (s->light_run < 0xFFFFu) s->light_run++;
+        s->heavy_run = 0;
+        if (!s->menu && s->light_run >= VT3_MENU_DETECT_MENU_FRAMES) s->menu = 1;
+    }
+    return s->menu;
+}

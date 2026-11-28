@@ -139,4 +139,32 @@ int vt3_touch_pick(const int *candidates, const float *dist, int n, uint32_t own
 /* The control index a swipe direction maps to, from the saved swipe.map.* table. */
 int vt3_touch_swipe_ctl(const int map[4], int dir);
 
+/* ---- telling the game's menus from a match ---------------------------------- */
+
+/* The overlay shrinks to the menu pad while the game is showing one of its own menus, and there is
+ * no guest hook to ask, so the only evidence is how much each presented frame draws: the game's
+ * menus are UI screens and a rally is a full 3D scene. A measured match frame is 197-390 draws, so
+ * the level is set well under that and far over a menu. Counting frames rather than comparing
+ * against a remembered peak is deliberate: a peak decays away while a heavy menu is still up, and
+ * before the first match there is no peak at all -- which is exactly when the boot, title, option
+ * and tour menus are on screen. */
+#define VT3_MENU_DETECT_MATCH_DRAWS  96    /* a frame drawing this or more is a rally */
+#define VT3_MENU_DETECT_MENU_FRAMES    8   /* quiet frames, running, that make it a menu */
+#define VT3_MENU_DETECT_MATCH_FRAMES   2   /* rally frames, running, that make it a match */
+
+typedef struct {
+    int      menu;          /* 1 while the guest looks like a menu */
+    unsigned light_run;     /* frames since the last rally-sized frame */
+    unsigned heavy_run;     /* consecutive rally-sized frames */
+    unsigned match_draws;   /* the rally level (0 = VT3_MENU_DETECT_MATCH_DRAWS) */
+} vt3_menu_detect_state;
+
+/* Folds one presented frame's draw count into the state and returns the mode it now implies:
+ * 1 = menu, 0 = match. A zeroed state starts as a match -- nothing is known yet -- and becomes a
+ * menu as soon as the frames have been quiet for VT3_MENU_DETECT_MENU_FRAMES in a row. Two rally
+ * frames in a row are needed to go back, so one heavy frame in a menu (a transition, a save) does
+ * not flip it, and a rally frame cancels a half-finished quiet run, so a match is never mistaken
+ * for a menu by a few light frames. */
+int vt3_menu_detect_update(vt3_menu_detect_state *s, int draws);
+
 #endif /* VT3_TOUCH_CORE_H */

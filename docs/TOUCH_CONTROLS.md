@@ -43,6 +43,17 @@ them — the draw profile says "menu", or the port's own quick menu is up — th
   occupies during a match.
 * Nothing else is drawn or hit-tested: no shoulders, no SELECT/START pills, no swipe pad.
 
+**Which screen is a menu** is decided from the frame alone, since there is no guest hook to ask: a
+frame drawing 96 calls or more is a rally (a measured match frame is 197–390), and eight frames
+below that in a row is a menu. Counting frames rather than comparing against a remembered peak is
+deliberate — a peak decays away while a heavy menu is still on screen, and before the first match
+there is no peak at all, which is exactly when the boot, title, option and tour menus are up. Two
+rally frames in a row are needed to leave menu mode, so one heavy frame (a transition, a save) does
+not flip it, and a rally frame cancels a half-finished quiet run, so a few light frames in a match
+(a fade, a cut) do not read as a menu either. The log names every switch with the draw count that
+caused it, and `VT3_TRACE_FRAMES=1` prints the count for every frame, so the screens can be checked
+against a log on a device.
+
 The switch follows the d-pad mode itself (`vt3_mode_update`, 140 ms dwell) rather than the raw menu
 signal, so the picture changes exactly when the input starts stepping. In menu mode the stick's
 centre is the cross's centre even with the floating profile, since the cross does not move. The
@@ -91,6 +102,7 @@ and stay hidden. `VT3_TOUCH_FORCE=1` overrides this and always shows the control
 | `VT3_TOUCH_ALPHA` | 1.0 | overall opacity (0.1–1.0) |
 | `VT3_TOUCH_COLOR` | 1 | 0 for monochrome |
 | `VT3_TOUCH_DEBUG` | unset | 1 logs every change of what the controls hold |
+| `VT3_TOUCH_MATCH_DRAWS` | 96 | draws per frame at or above which the game counts as a match, not a menu (menu mode's trigger) |
 
 On a device these go in `vt3.env` beside the game data
 (`/sdcard/Android/data/net.vt3port.game/files/vt3.env`).
