@@ -142,3 +142,19 @@ cc -O1 -o /tmp/menupad tools/touchtest/menu_pad_preview.c \
 
 It draws from the same layout and hit test the overlay uses, marks the pick zone apart from the
 drawn shape, and prints each control's centre and size plus the gaps between them.
+
+To check the menu-mode level against the real game rather than an estimate, capture a frame trace
+and read it screen by screen:
+
+```
+cc -O1 -o /tmp/frametrace tools/frametrace/frame_trace.c \
+   runtime/src/ui/touch_core.c runtime/src/ui/touch_config.c -Iruntime/include -lm
+adb logcat -v time > capture.log        # with VT3_TRACE_FRAMES=1 in vt3.env
+/tmp/frametrace capture.log             # [-t draws] [-g gap-ms]
+```
+
+It runs the same detection over the capture (so the kinds are what the overlay decided), ends a
+screen at a change of kind or at a gap in the log, leaves out the frames where a change is still
+settling, and prints each screen's min/mean/max with a verdict on the level — plus the level that
+would sit between the highest menu and the lowest match, and a warning for any screen called a
+match that draws close to the level. Exit status is 0 when the capture agrees with the level.
