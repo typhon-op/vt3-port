@@ -250,21 +250,13 @@ final class Ui {
     }
 
     /**
-     * An option list from the resources, in the order of the constants it labels: item i belongs to
-     * index i. A translation that does not list every item falls back to the built-in English list,
-     * because a short list would otherwise shift the value behind each label.
+     * Resolves one string resource per item, so each label is found by the value it names rather
+     * than by its place in a list.
      */
-    static String[] labels(Context c, int id, String[] fallback) {
-        String[] list;
-        try {
-            list = c.getResources().getStringArray(id);
-        } catch (RuntimeException e) {
-            return fallback;
-        }
-        if (list.length == fallback.length) return list;
-        DiagLog.w("ui", "option list " + id + " has " + list.length + " items, expected "
-                + fallback.length + "; using the English list");
-        return fallback;
+    static String[] labels(Context c, int[] ids) {
+        String[] out = new String[ids.length];
+        for (int i = 0; i < ids.length; i++) out[i] = c.getString(ids[i]);
+        return out;
     }
 
     /**

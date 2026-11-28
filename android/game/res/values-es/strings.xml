@@ -266,54 +266,54 @@
     <string name="diagnostics_save_failed">No se pudo guardar el informe: %1$s</string>
 
     <!-- Option labels for the settings controls; the order follows the constants they name. -->
-    <string-array name="preset_labels">
-        <item>Auto (dispositivo)</item>
-        <item>Bajo</item>
-        <item>Medio</item>
-        <item>Alto</item>
-        <item>Personalizado</item>
-    </string-array>
-    <string-array name="fps_labels">
-        <item>Auto</item>
-        <item>30 fps</item>
-        <item>35 fps</item>
-        <item>40 fps</item>
-        <item>45 fps</item>
-        <item>50 fps</item>
-        <item>55 fps</item>
-        <item>60 fps</item>
-        <item>Sin límite</item>
-    </string-array>
-    <string-array name="res_labels">
-        <item>Auto</item>
-        <item>Panel nativo</item>
-        <item>1440p</item>
-        <item>1220p</item>
-        <item>1080p</item>
-        <item>900p</item>
-        <item>720p</item>
-        <item>540p</item>
-    </string-array>
-    <string-array name="aniso_labels">
-        <item>Auto</item>
-        <item>Desactivado (1x)</item>
-        <item>2x</item>
-        <item>4x</item>
-        <item>8x</item>
-        <item>16x</item>
-    </string-array>
-    <string-array name="overlay_corner_labels">
-        <item>Arriba a la izquierda</item>
-        <item>Arriba a la derecha</item>
-        <item>Abajo a la izquierda</item>
-        <item>Abajo a la derecha</item>
-    </string-array>
-    <string-array name="thermal_labels">
-        <item>frío</item>
-        <item>templado</item>
-        <item>moderado</item>
-        <item>caliente</item>
-        <item>crítico</item>
-        <item>emergencia</item>
-    </string-array>
+
+    <!-- Option labels, one resource per value, so a translation cannot shift a stored value. -->
+    <string name="preset_auto">Auto (dispositivo)</string>
+    <string name="preset_low">Bajo</string>
+    <string name="preset_medium">Medio</string>
+    <string name="preset_high">Alto</string>
+    <string name="preset_custom">Personalizado</string>
+    <string name="fps_auto">Auto</string>
+    <string name="fps_30">30 fps</string>
+    <string name="fps_35">35 fps</string>
+    <string name="fps_40">40 fps</string>
+    <string name="fps_45">45 fps</string>
+    <string name="fps_50">50 fps</string>
+    <string name="fps_55">55 fps</string>
+    <string name="fps_60">60 fps</string>
+    <string name="fps_uncapped">Sin límite</string>
+    <string name="res_auto">Auto</string>
+    <string name="res_native">Panel nativo</string>
+    <string name="res_1440p">1440p</string>
+    <string name="res_1220p">1220p</string>
+    <string name="res_1080p">1080p</string>
+    <string name="res_900p">900p</string>
+    <string name="res_720p">720p</string>
+    <string name="res_540p">540p</string>
+    <string name="aniso_auto">Auto</string>
+    <string name="aniso_off">Desactivado (1x)</string>
+    <string name="aniso_2x">2x</string>
+    <string name="aniso_4x">4x</string>
+    <string name="aniso_8x">8x</string>
+    <string name="aniso_16x">16x</string>
+    <string name="corner_top_left">Arriba a la izquierda</string>
+    <string name="corner_top_right">Arriba a la derecha</string>
+    <string name="corner_bottom_left">Abajo a la izquierda</string>
+    <string name="corner_bottom_right">Abajo a la derecha</string>
+    <string name="thermal_cool">frío</string>
+    <string name="thermal_warm">templado</string>
+    <string name="thermal_moderate">moderado</string>
+    <string name="thermal_hot">caliente</string>
+    <string name="thermal_critical">crítico</string>
+    <string name="thermal_emergency">emergencia</string>
+    <string name="tier_ultra">Ultra</string>
+    <string name="tier_high">Alto</string>
+    <string name="tier_balanced">Equilibrado</string>
+    <string name="tier_performance">Rendimiento</string>
+    <string name="tier_low">Bajo</string>
+    <string name="tier_minimum">Mínimo</string>
+    <string name="overlay_position">Posición de la superposición</string>
+    <string name="overlay_position_hint">Mantiene la superposición lejos de los controles en pantalla</string>
+    <string name="settings_next_match">próximo partido</string>
+    <string name="settings_apply_note">El límite de imágenes, la resolución, la escala de renderizado, la anisotropía, las sombras y la pantalla ancha se leen al empezar un partido: un cambio se aplica al partido siguiente, incluido el que se inicie tras volver al menú principal.</string>
 </resources>

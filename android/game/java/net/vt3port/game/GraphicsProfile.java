@@ -45,22 +45,120 @@ public final class GraphicsProfile {
 
     /* Low, Medium and High pin a tier; Auto follows the device and Custom keeps the overrides. */
     public static final String[] PRESET_IDS = { "auto", "low", "medium", "high", "custom" };
-    public static final String[] PRESET_LABELS = { "Auto (device)", "Low", "Medium", "High", "Custom" };
 
     /* The frame limits the runtime is tested with. 0 means uncapped (the panel's own rate). */
     public static final int[] FPS = { -1, 30, 35, 40, 45, 50, 55, 60, 0 };
-    public static final String[] FPS_LABEL = {
-            "Auto", "30 fps", "35 fps", "40 fps", "45 fps", "50 fps", "55 fps", "60 fps", "Uncapped"
-    };
 
     /* Render heights. 0 is the panel's own resolution, which is what the top tiers use. */
     public static final int[] RES = { -1, 0, 1440, 1220, 1080, 900, 720, 540 };
-    public static final String[] RES_LABEL = {
-            "Auto", "Native panel", "1440p", "1220p", "1080p", "900p", "720p", "540p"
-    };
 
     public static final int[] ANISO = { -1, 1, 2, 4, 8, 16 };
-    public static final String[] ANISO_LABEL = { "Auto", "Off (1x)", "2x", "4x", "8x", "16x" };
+
+    /*
+     * Every label is its own string resource, named after the value it names, and it is looked up
+     * from that value: fpsLabelId(30) and resLabelId(1080) each find their own id. A translation can
+     * therefore be reordered or rewritten without a label ever landing on another stored value,
+     * which a list indexed by position could not promise.
+     */
+    static int presetLabelId(String preset) {
+        switch (preset) {
+            case "low": return R.string.preset_low;
+            case "medium": return R.string.preset_medium;
+            case "high": return R.string.preset_high;
+            case "custom": return R.string.preset_custom;
+            default: return R.string.preset_auto;
+        }
+    }
+
+    static int fpsLabelId(int fps) {
+        switch (fps) {
+            case 30: return R.string.fps_30;
+            case 35: return R.string.fps_35;
+            case 40: return R.string.fps_40;
+            case 45: return R.string.fps_45;
+            case 50: return R.string.fps_50;
+            case 55: return R.string.fps_55;
+            case 60: return R.string.fps_60;
+            case 0: return R.string.fps_uncapped;
+            default: return R.string.fps_auto;
+        }
+    }
+
+    static int resLabelId(int height) {
+        switch (height) {
+            case 0: return R.string.res_native;
+            case 1440: return R.string.res_1440p;
+            case 1220: return R.string.res_1220p;
+            case 1080: return R.string.res_1080p;
+            case 900: return R.string.res_900p;
+            case 720: return R.string.res_720p;
+            case 540: return R.string.res_540p;
+            default: return R.string.res_auto;
+        }
+    }
+
+    static int anisoLabelId(int aniso) {
+        switch (aniso) {
+            case 1: return R.string.aniso_off;
+            case 2: return R.string.aniso_2x;
+            case 4: return R.string.aniso_4x;
+            case 8: return R.string.aniso_8x;
+            case 16: return R.string.aniso_16x;
+            default: return R.string.aniso_auto;
+        }
+    }
+
+    /** The preset names in PRESET_IDS order, for the picker. */
+    public static String[] presetLabels(Context c) {
+        String[] out = new String[PRESET_IDS.length];
+        for (int i = 0; i < PRESET_IDS.length; i++) out[i] = c.getString(presetLabelId(PRESET_IDS[i]));
+        return out;
+    }
+
+    /** The frame-rate names in FPS order, for the picker. */
+    public static String[] fpsLabels(Context c) {
+        String[] out = new String[FPS.length];
+        for (int i = 0; i < FPS.length; i++) out[i] = c.getString(fpsLabelId(FPS[i]));
+        return out;
+    }
+
+    /** The resolution names in RES order, for the picker. */
+    public static String[] resLabels(Context c) {
+        String[] out = new String[RES.length];
+        for (int i = 0; i < RES.length; i++) out[i] = c.getString(resLabelId(RES[i]));
+        return out;
+    }
+
+    /** The anisotropy names in ANISO order, for the picker. */
+    public static String[] anisoLabels(Context c) {
+        String[] out = new String[ANISO.length];
+        for (int i = 0; i < ANISO.length; i++) out[i] = c.getString(anisoLabelId(ANISO[i]));
+        return out;
+    }
+
+    /** The thermal status name, by the status itself. */
+    public static String thermalLabel(Context c, int status) {
+        switch (status) {
+            case PowerManager.THERMAL_STATUS_NONE: return c.getString(R.string.thermal_cool);
+            case PowerManager.THERMAL_STATUS_LIGHT: return c.getString(R.string.thermal_warm);
+            case PowerManager.THERMAL_STATUS_MODERATE: return c.getString(R.string.thermal_moderate);
+            case PowerManager.THERMAL_STATUS_SEVERE: return c.getString(R.string.thermal_hot);
+            case PowerManager.THERMAL_STATUS_CRITICAL: return c.getString(R.string.thermal_critical);
+            default: return c.getString(R.string.thermal_emergency);
+        }
+    }
+
+    /** The device tier name, for the settings screen. */
+    public static String tierLabel(Context c, int tier) {
+        switch (tier) {
+            case ULTRA: return c.getString(R.string.tier_ultra);
+            case HIGH: return c.getString(R.string.tier_high);
+            case BALANCED: return c.getString(R.string.tier_balanced);
+            case PERFORMANCE: return c.getString(R.string.tier_performance);
+            case LOW: return c.getString(R.string.tier_low);
+            default: return c.getString(R.string.tier_minimum);
+        }
+    }
 
     private GraphicsProfile() {}
 

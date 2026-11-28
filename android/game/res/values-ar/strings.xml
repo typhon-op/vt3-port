@@ -272,54 +272,54 @@
     <string name="diagnostics_save_failed">تعذّر حفظ التقرير: %1$s</string>
 
     <!-- تسميات قوائم الخيارات؛ الترتيب يتبع الثوابت التي تسمّيها. -->
-    <string-array name="preset_labels">
-        <item>تلقائي (الجهاز)</item>
-        <item>منخفض</item>
-        <item>متوسط</item>
-        <item>عالٍ</item>
-        <item>مخصص</item>
-    </string-array>
-    <string-array name="fps_labels">
-        <item>تلقائي</item>
-        <item>30 إطاراً/ث</item>
-        <item>35 إطاراً/ث</item>
-        <item>40 إطاراً/ث</item>
-        <item>45 إطاراً/ث</item>
-        <item>50 إطاراً/ث</item>
-        <item>55 إطاراً/ث</item>
-        <item>60 إطاراً/ث</item>
-        <item>بلا حد</item>
-    </string-array>
-    <string-array name="res_labels">
-        <item>تلقائي</item>
-        <item>شاشة الجهاز</item>
-        <item>1440p</item>
-        <item>1220p</item>
-        <item>1080p</item>
-        <item>900p</item>
-        <item>720p</item>
-        <item>540p</item>
-    </string-array>
-    <string-array name="aniso_labels">
-        <item>تلقائي</item>
-        <item>مطفأ (1x)</item>
-        <item>2x</item>
-        <item>4x</item>
-        <item>8x</item>
-        <item>16x</item>
-    </string-array>
-    <string-array name="overlay_corner_labels">
-        <item>أعلى اليسار</item>
-        <item>أعلى اليمين</item>
-        <item>أسفل اليسار</item>
-        <item>أسفل اليمين</item>
-    </string-array>
-    <string-array name="thermal_labels">
-        <item>بارد</item>
-        <item>دافئ</item>
-        <item>معتدل</item>
-        <item>حار</item>
-        <item>حرج</item>
-        <item>طارئ</item>
-    </string-array>
+
+    <!-- Option labels, one resource per value, so a translation cannot shift a stored value. -->
+    <string name="preset_auto">تلقائي (الجهاز)</string>
+    <string name="preset_low">منخفض</string>
+    <string name="preset_medium">متوسط</string>
+    <string name="preset_high">عالٍ</string>
+    <string name="preset_custom">مخصص</string>
+    <string name="fps_auto">تلقائي</string>
+    <string name="fps_30">30 إطاراً/ث</string>
+    <string name="fps_35">35 إطاراً/ث</string>
+    <string name="fps_40">40 إطاراً/ث</string>
+    <string name="fps_45">45 إطاراً/ث</string>
+    <string name="fps_50">50 إطاراً/ث</string>
+    <string name="fps_55">55 إطاراً/ث</string>
+    <string name="fps_60">60 إطاراً/ث</string>
+    <string name="fps_uncapped">بلا حد</string>
+    <string name="res_auto">تلقائي</string>
+    <string name="res_native">شاشة الجهاز</string>
+    <string name="res_1440p">1440p</string>
+    <string name="res_1220p">1220p</string>
+    <string name="res_1080p">1080p</string>
+    <string name="res_900p">900p</string>
+    <string name="res_720p">720p</string>
+    <string name="res_540p">540p</string>
+    <string name="aniso_auto">تلقائي</string>
+    <string name="aniso_off">مطفأ (1x)</string>
+    <string name="aniso_2x">2x</string>
+    <string name="aniso_4x">4x</string>
+    <string name="aniso_8x">8x</string>
+    <string name="aniso_16x">16x</string>
+    <string name="corner_top_left">أعلى اليسار</string>
+    <string name="corner_top_right">أعلى اليمين</string>
+    <string name="corner_bottom_left">أسفل اليسار</string>
+    <string name="corner_bottom_right">أسفل اليمين</string>
+    <string name="thermal_cool">بارد</string>
+    <string name="thermal_warm">دافئ</string>
+    <string name="thermal_moderate">معتدل</string>
+    <string name="thermal_hot">حار</string>
+    <string name="thermal_critical">حرج</string>
+    <string name="thermal_emergency">طارئ</string>
+    <string name="tier_ultra">فائق</string>
+    <string name="tier_high">عالٍ</string>
+    <string name="tier_balanced">متوازن</string>
+    <string name="tier_performance">أداء</string>
+    <string name="tier_low">منخفض</string>
+    <string name="tier_minimum">الحد الأدنى</string>
+    <string name="overlay_position">موضع التراكب</string>
+    <string name="overlay_position_hint">يبقي التراكب بعيداً عن أدوات التحكم على الشاشة</string>
+    <string name="settings_next_match">المباراة القادمة</string>
+    <string name="settings_apply_note">حد الإطارات ودقة العرض ومقياس العرض والتحسين الاتجاهي والظلال والشاشة العريضة تُقرأ عند بدء المباراة: التغيير يسري على المباراة القادمة، بما فيها مباراة تبدأ بعد العودة إلى القائمة الرئيسية.</string>
 </resources>
