@@ -101,17 +101,32 @@ On a desktop build, `VT3_TOUCH=1` draws the controls (there is no touch input, s
 layout check). On Android, `adb shell input tap X Y` / `input swipe X0 Y0 X1 Y1 DURATION` injects
 touch through the real input stack and drives the controls.
 
-Everything that can be decided without a screen has a host test:
+Everything that can be decided without a screen has a host test, and one script builds and runs all
+of them:
 
 ```
-cc -O1 -o /tmp/touchtest tools/touchtest/TouchHostTest.c \
-   runtime/src/ui/touch_core.c runtime/src/ui/touch_config.c -Iruntime/include -lm
-cc -O1 -o /tmp/touchmenutest tools/touchtest/TouchMenuHostTest.c \
+tools/hosttests.sh          # one line per test, and the exit status
+CC=clang tools/hosttests.sh # with another compiler
+tools/hosttests.sh -v       # plus each test's full output
+```
+
+It covers six: the touch core (stick transform, mode switch, repeat timing, gestures, button map
+and saved-config parsing), the menu-mode pad's layout and hit test, the quick menu's geometry,
+thermal, lifecycle and the audio mixer. Each is compiled with `-Wall -Wextra` into
+`build/hosttests/`; the script exits non-zero if any of them fails to build or fails a check.
+
+The menu-mode test is the one that stands in for looking at the screen: for every frame size and
+size setting the port runs at, the cross, A/B and the MENU pill stay inside the frame, do not
+overlap, the cross's and pill's pick zones reach nothing else, and every drawn control can be hit
+-- at its centre, inside its shape, and on each of the cross's four arms.
+
+To judge the pad's placement by eye without a phone, print it as ASCII:
+
+```
+cc -O1 -o /tmp/menupad tools/touchtest/menu_pad_preview.c \
    runtime/src/ui/touch_menu_layout.c -Iruntime/include -lm
+/tmp/menupad 1920 1080        # [width height [size-scale [columns]]]
 ```
 
-The first holds the stick transform, the mode switch, the repeat timing, gestures, the button map
-and the saved-config parsing to their arithmetic. The second covers the menu-mode pad: for every
-frame size and size setting the port runs at, the cross, A/B and the MENU pill stay inside the
-frame, do not overlap, the cross's and pill's pick zones reach nothing else, and every drawn control
-can be hit -- at its centre, inside its shape, and on each of the cross's four arms.
+It draws from the same layout and hit test the overlay uses, marks the pick zone apart from the
+drawn shape, and prints each control's centre and size plus the gaps between them.
