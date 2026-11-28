@@ -18,11 +18,15 @@ So leaving a match is a deliberate thread ending, not a stack unwind:
    - menu closed, all touch points released, touch/menu/input state cleared,
    - `vt3_dsound_shutdown()` → the mixer drops the match's buffers and the AAudio
      stream is closed (the next match opens its own; see `docs/audio-pipeline.md`),
+   - `d3d9_gpu_shutdown()` → `vt3_gfx_shutdown()` and the cached-settings drop. It
+     destroys every texture the renderer owned and takes the backend away,
    - `d3d9_obj_forget_all()` → every host object the guest left behind is released.
      The guest's own `Release` calls never run, because it leaves by ending its
      thread: without this the 4096-slot object table fills up over a few relaunches
-     and a later match cannot create a device, a texture or a sound buffer,
-   - `d3d9_gpu_shutdown()` → `vt3_gfx_shutdown()` and the cached-settings drop,
+     and a later match cannot create a device, a texture or a sound buffer. It runs
+     after the renderer on purpose — with `g_ops` NULL and `g_gpu_ok` clear, every
+     texture destroy it reaches is a no-op, so it frees host memory only. Setting
+     `VT3_KEEP_OBJECTS=1` (or a `keep_objects` marker) skips it for an A/B run,
    - `vt3_diag_stop()`,
    - `Bridge.openMainMenu()` starts `MainMenu`, then the game activity is finished,
    - `pthread_exit()`, which runs the cleanup handler in `android_entry.c`.

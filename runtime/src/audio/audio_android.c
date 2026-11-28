@@ -43,11 +43,16 @@ struct vt3_audio {
     pthread_mutex_t api_mu;
     pthread_cond_t wake_cv;       /* timed on CLOCK_MONOTONIC; signalled when the state changes */
     pthread_t watchdog;
-    _Atomic int watchdog_on;
-    _Atomic int stopping;         /* close is in progress: the watchdog must leave */
+    int watchdog_on;              /* plain: set before the object is published, read by close */
+    int stopping;                 /* close is in progress: written before api_mu, read under it */
 };
 
 static vt3_audio *g_open;        /* the one open output, for the platform pump's pause/recover */
+/* Guards g_open itself. The pointer is published and cleared on the guest thread, but
+ * vt3_audio_pause runs on the platform thread: without this it could load the pointer just before
+ * a close freed the object and then lock a destroyed mutex. Lock order is g_open_mu, then api_mu, in
+ * every path that takes both. */
+static pthread_mutex_t g_open_mu = PTHREAD_MUTEX_INITIALIZER;
 /* What the platform last asked for. Remembered even while there is no output, because an output
  * opened during a background stretch must not start playing behind another app. */
 static _Atomic int g_platform_paused;
@@ -202,7 +207,7 @@ static void *watchdog_main(void *arg)
     vt3_audio *a = arg;
     for (;;) {
         pthread_mutex_lock(&a->api_mu);
-        if (atomic_load(&a->stopping)) {
+        if (a->stopping) {
             pthread_mutex_unlock(&a->api_mu);
             break;
         }
@@ -225,10 +230,10 @@ static void *watchdog_main(void *arg)
 static void start_watchdog(vt3_audio *a)
 {
     if (pthread_create(&a->watchdog, NULL, watchdog_main, a) == 0) {
-        atomic_store(&a->watchdog_on, 1);
+        a->watchdog_on = 1;
     } else {
-        atomic_store(&a->watchdog_on, 0);
-        VT3_CWARN("audio", "could not start the reopen watchdog; recovery waits for the game loop");
+        a->watchdog_on = 0;
+        VT3_CWARN("audio", "could not start the reopen watchdog; recovery falls back to the frame loop");
     }
 }
 
@@ -256,20 +261,17 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
     }
     if (open_stream(a) != 0) {
         /* The output can be busy or not up yet at a cold start (another app holding it, or the
-         * device still settling). Keep the object and let the platform pump retry: failing the
-         * open here would leave the game silent for the whole session. While there is no
-         * stream the mixer drops audio and keeps its timeline on the wall clock. */
-        VT3_CWARN("audio", "no output yet; the platform pump will retry");
+         * device still settling). Keep the object and let the watchdog retry: failing the open
+         * here would leave the game silent for the whole session. While there is no stream the
+         * mixer drops audio and keeps its timeline on the wall clock. */
+        VT3_CWARN("audio", "no output yet; the watchdog will retry");
         atomic_store(&a->lost, 1);
         atomic_store(&a->retry_at_ns, now_ns() + 250000000u);
-        start_watchdog(a);          /* it is what will retry this open */
-        g_open = a;
-        vt3_diag_bind_audio(a);
-        *out = a;
-        return 0;
     }
-    start_watchdog(a);
+    start_watchdog(a);              /* one thread for the retry, open or not */
+    pthread_mutex_lock(&g_open_mu);
     g_open = a;
+    pthread_mutex_unlock(&g_open_mu);
     vt3_diag_bind_audio(a);
     *out = a;
     return 0;
@@ -278,9 +280,13 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
 void vt3_audio_pause(int paused)
 {
     int want = paused ? 1 : 0;
-    atomic_store(&g_platform_paused, want);
+    atomic_store(&g_platform_paused, want);  /* remembered even with no output to pause */
+    pthread_mutex_lock(&g_open_mu);          /* the close path frees the object under this */
     vt3_audio *a = g_open;
-    if (!a) return;                          /* remembered: the next open starts paused */
+    if (!a) {
+        pthread_mutex_unlock(&g_open_mu);
+        return;
+    }
     pthread_mutex_lock(&a->api_mu);          /* not while the watchdog is replacing the stream */
     if (atomic_load(&a->paused) != want) {   /* already in that state: no AAudio churn */
         if (!a->stream) {
@@ -307,6 +313,7 @@ void vt3_audio_pause(int paused)
     /* Wake the watchdog: a resume with no usable stream should not wait for the next tick. */
     pthread_cond_signal(&a->wake_cv);
     pthread_mutex_unlock(&a->api_mu);
+    pthread_mutex_unlock(&g_open_mu);
 }
 
 int vt3_audio_streaming(const vt3_audio *a)
@@ -323,16 +330,19 @@ int vt3_audio_is_paused(const vt3_audio *a)
 
 /* An immediate retry, for the platform pump: the watchdog already owns the retry schedule, so a
  * running game gets its stream back at the next frame instead of at the next tick, and the two
- * callers cannot reopen at once (reopen_locked only runs with api_mu held). Same thread as
- * vt3_audio_close makes the g_open read safe here, as before. */
+ * callers cannot reopen at once (reopen_locked only runs with api_mu held). Taking g_open_mu makes
+ * it a fast poke in the common case (no stream lost: nothing to do) without reading a pointer that
+ * a close on another thread could be freeing. */
 void vt3_audio_recover(void)
 {
+    pthread_mutex_lock(&g_open_mu);
     vt3_audio *a = g_open;
-    if (!a) return;
-    if (!atomic_load(&a->lost)) return;      /* the common case: no lock, nothing to do */
-    pthread_mutex_lock(&a->api_mu);
-    reopen_locked(a);
-    pthread_mutex_unlock(&a->api_mu);
+    if (a && atomic_load(&a->lost)) {
+        pthread_mutex_lock(&a->api_mu);
+        reopen_locked(a);
+        pthread_mutex_unlock(&a->api_mu);
+    }
+    pthread_mutex_unlock(&g_open_mu);
 }
 
 /* The output ring's level in milliseconds, for the diagnostics snapshot. */
@@ -363,19 +373,22 @@ int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
 void vt3_audio_close(vt3_audio *a)
 {
     if (!a) return;
+    /* Held for the whole teardown, so a pause on the platform thread either finishes first or sees
+     * the cleared pointer: it must not lock api_mu on an object this is about to free. */
+    pthread_mutex_lock(&g_open_mu);
     if (a == g_open) {
         g_open = NULL;
         vt3_diag_bind_audio(NULL);
     }
     /* Stop the watchdog first, and wait for it: it may be inside a reopen, and it must not touch
      * the stream or the ring once they are freed. */
-    atomic_store(&a->stopping, 1);
+    a->stopping = 1;
     pthread_mutex_lock(&a->api_mu);
     pthread_cond_signal(&a->wake_cv);            /* wake a timed wait so the join is prompt */
     pthread_mutex_unlock(&a->api_mu);
-    if (atomic_load(&a->watchdog_on)) {
+    if (a->watchdog_on) {
         pthread_join(a->watchdog, NULL);
-        atomic_store(&a->watchdog_on, 0);
+        a->watchdog_on = 0;
     }
     pthread_mutex_lock(&a->api_mu);
     if (a->stream) {
@@ -389,6 +402,7 @@ void vt3_audio_close(vt3_audio *a)
     pthread_cond_destroy(&a->wake_cv);
     pthread_mutex_destroy(&a->api_mu);
     free(a);
+    pthread_mutex_unlock(&g_open_mu);
 }
 
 size_t vt3_audio_write(vt3_audio *a, const void *pcm, size_t bytes)

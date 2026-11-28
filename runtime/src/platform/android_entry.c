@@ -143,6 +143,9 @@ static void apply_settings(void)
     set_int_env("VT3_AUDIO_MUTE", marker_int("audio_mute", 0));
     if (marker_int("trace_audio", 0)) setenv("VT3_TRACE_AUDIO", "1", 0);
     if (marker_int("trace_fps", 0)) setenv("VT3_TRACE_FPS", "1", 0);
+    /* A/B levers that are not on the settings screen, as marker files so they can be tested on a
+     * device without a rebuild: keep_objects leaves the match's host objects unreleased. */
+    if (marker_int("keep_objects", 0)) setenv("VT3_KEEP_OBJECTS", "1", 0);
 }
 
 /* Diagnostics come up before anything else, so a failure in the rest of start-up is recorded. The
@@ -246,7 +249,7 @@ static void forget_marker_env(void)
         "VT3_NO_VSM", "VT3_NO_WIDESCREEN", "VT3_PERF_OVERLAY", "VT3_PERF_OVERLAY_FULL",
         "VT3_TOUCH", "VT3_TOUCH_FORCE", "VT3_TOUCH_SCALE", "VT3_TOUCH_ALPHA", "VT3_TOUCH_COLOR",
         "VT3_AUDIO_VOLUME", "VT3_AUDIO_MUTE", "VT3_TRACE_AUDIO", "VT3_TRACE_FPS",
-        "VT3_GAME_ROOT", "VT3_SHADER_PACK"
+        "VT3_KEEP_OBJECTS", "VT3_GAME_ROOT", "VT3_SHADER_PACK"
     };
     for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++) unsetenv(names[i]);
     VT3_CINFO("app", "relaunch: re-reading the settings markers");

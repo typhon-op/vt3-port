@@ -211,8 +211,27 @@ GPTR d3d9_new_stub(uint32_t kind, GPTR parent)
     return d3d9_obj_new(kind, NULL, parent);
 }
 
+/* VT3_KEEP_OBJECTS=1 (or a keep_objects marker in the settings dir, which android_entry.c turns
+ * into this variable) skips the release: the A/B lever for the one teardown nobody has watched on a
+ * device. With it set, the 4096 slots fill after a few matches and a later match cannot create a new
+ * object, but the release never runs, so a fault in it cannot be mistaken for anything else. Read
+ * per call, not cached: the value is re-read from the markers on every launch. */
+static int keep_objects(void)
+{
+    const char *e = getenv("VT3_KEEP_OBJECTS");
+    return e && atoi(e) != 0;
+}
+
 void d3d9_obj_forget_all(void)
 {
+    if (keep_objects()) {
+        int held = 0;
+        for (int i = 0; i < D3D9_MAX_HOST; i++)
+            if (g_d3d9_host[i].kind != D3D9_KIND_NONE) held++;
+        VT3_CWARN("app", "VT3_KEEP_OBJECTS is set: %d host object(s) left in the table (A/B test)",
+                  held);
+        return;
+    }
     int freed = 0;
     for (int i = 0; i < D3D9_MAX_HOST; i++) {
         if (g_d3d9_host[i].kind == D3D9_KIND_NONE) continue;

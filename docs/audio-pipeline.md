@@ -85,7 +85,9 @@ Every item below was reproduced in the source before it was changed; none of it 
    (`g_ops` is NULL) and `d3d9_gpu_tex_destroy()` is gated on `g_gpu_ok`, while `vk_shutdown()`
    has already destroyed every texture the renderer owned — so the release frees host memory only
    and never touches a live Vulkan object. That is the one teardown nobody has watched on a
-   device, and the ordering is what makes it safe to reason about.
+   device, and the ordering is what makes it safe to reason about. `VT3_KEEP_OBJECTS=1` (or a
+   `keep_objects` marker) skips the release entirely, so a device run can A/B it against the
+   previous build without another rebuild.
 5. **A tick later than 20 ms dropped audio the ring could hold.** The per-tick cap was 960 frames
    while the ring holds 96 ms, so a load spike cut up to 76 ms of sound that had room to be
    buffered. The cap is now the ring's own capacity (`MIX_MAX_FRAMES`), and only a tick more than
