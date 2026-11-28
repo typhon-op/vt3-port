@@ -22,14 +22,9 @@
 #define VT3_MIX_FRESH_BLOCK  256u
 /* Q15 gate: full level. */
 #define VT3_MIX_GATE_MAX     32768
-/* Gate ramp length, 2 ms at 48 kHz: long enough to hide a click, short enough to be inaudible. */
+/* Gate ramp length, 2 ms at 48 kHz: long enough to hide a click, short enough to be inaudible.
+ * Used to fade in a sound at Play, and as the length of the notch across a content change. */
 #define VT3_MIX_RAMP_FRAMES  96u
-/* How long the gate may stay open on an unmarked block waiting for a write that is already under
- * way (3 ms at 48 kHz). The game's writer competes for the guest lock, so it can finish an Unlock
- * a few output frames after the mixer crossed into the block; without this grace that costs a full
- * 2 ms fade out and back (heard as a dip). Once per stale stretch: a writer that never arrives
- * still closes the gate, so old audio is never replayed. */
-#define VT3_MIX_GRACE_FRAMES 144u
 /* A tick this far behind the schedule re-anchors the timeline instead of trying to catch it up:
  * the ring cannot hold that much anyway, and sprinting would just fill it and drop the same audio. */
 #define VT3_MIX_RESYNC_NS    250000000ull
@@ -41,11 +36,11 @@ typedef struct ds_mix_state {
     uint32_t last_blk;   /* FRESH_BLOCK block the last frame read, or UINT32_MAX */
     int32_t gate;        /* Q15 output gate: 0 silent, VT3_MIX_GATE_MAX full */
     uint32_t dip_frames; /* trace: output frames rendered below full gate (cleared by the reader) */
-    uint32_t stale_events; /* trace: transitions of the gate to closed (cleared by the reader) */
-    uint32_t stale_blk;    /* trace: FRESH_BLOCK block where the last stale transition happened */
-    int32_t stale;         /* trace: 1 while the gate is closed on stale data */
-    uint32_t grace;        /* frames of late-write grace left in this stale stretch */
-    uint32_t grace_frames; /* trace: output frames the grace kept the gate open (cleared by the reader) */
+    uint32_t stale_events; /* trace: stretches the mixer read a block the game had not rewritten */
+    uint32_t stale_blk;    /* trace: FRESH_BLOCK block where the last stale stretch began */
+    int32_t stale;         /* trace: 1 while the mixer reads unmarked (previous-lap) audio */
+    uint32_t notch_left;   /* frames left of the content-change notch, 0 when none is running */
+    uint32_t notch_len;    /* frames of fade-out (and of fade-in) that notch is built from */
 } ds_mix_state;
 
 /* Q32 phase step for rate_hz source frames per second against the 48 kHz output. At 48 kHz the
@@ -57,18 +52,20 @@ double ds_mix_volume(int32_t hundredths_db);
 void   ds_mix_pan(int32_t pan, double *gl, double *gr);
 
 /* The state a playback starts from: gate closed (fade in, no click), no block played yet, no stale
- * stretch in progress, and the late-write grace available. Play, SetCurrentPosition and the end of
- * a finished buffer all use it, so a buffer that is played again cannot inherit the previous
- * playback's gate or grace. The phase is not touched: it comes from the play position. */
+ * stretch in progress, no notch running. Play, SetCurrentPosition and the end of a finished buffer
+ * all use it, so a buffer that is played again cannot inherit the previous playback's state. The
+ * phase is not touched: it comes from the play position. */
 void ds_mix_reset(ds_mix_state *st);
 
 /* Adds `frames` output frames of `data` (bytes of nch-channel, bits-bit PCM at `align`
  * bytes a frame) to the interleaved stereo accumulator acc, starting at st->phase and
  * advancing it by step_q32 an output frame. fresh, when not NULL, is one flag per
- * VT3_MIX_FRESH_BLOCK bytes set by the game's writes and cleared once played: an
- * unwritten block fades the gate out, so a late writer costs a dip, not a click or a
- * repeat. Returns the frames rendered; fewer than `frames` at the end of a non-looping
- * buffer. The accumulator is not cleared, so several buffers sum into it. */
+ * VT3_MIX_FRESH_BLOCK bytes set by the game's writes and cleared once played. A block the
+ * game has not rewritten holds the previous lap, and is played: a writer that is late costs
+ * the audio from 128 ms ago (what a sound card plays too), never silence. Where the content
+ * changes - from freshly written to previous lap and back - a 2 ms notch hides the step.
+ * Returns the frames rendered; fewer than `frames` at the end of a non-looping buffer. The
+ * accumulator is not cleared, so several buffers sum into it. */
 uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint32_t bytes,
                        uint32_t nch, uint32_t bits, uint32_t align, int looping,
                        uint8_t *fresh, uint64_t step_q32, double gl, double gr,

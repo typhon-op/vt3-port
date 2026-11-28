@@ -228,8 +228,18 @@ recompilation of `vt3.c`), and `rep movs` translating to `memmove` instead of a 
      quad/shader than the in-play blur (VSes `dce123fc`, `4a2fc5d6`, `cd2adbf0`, `80d94c77`: all
      `vs_pos = vi0; vo_T0.xy = vi1.xy; gl_Position = (x, -y, z, w)`, i.e. FVF `0x102`).
    - The NaN fix did not help (it is in the build).
-3. **Menu gargle: root cause found (2026-10-23 session), game-side stall is the remainder.**
-   Everything the game plays - music and menu SFX alike - streams through ONE 73728-byte,
+3. **Menu gargle: root cause found (2026-10-23 session), fixed in the mixer (2026-11-28).**
+   The station below is the diagnosis; the fix was on the output policy, not the writer. A block
+   the game had not rewritten used to be faded to silence, and because *all* sound shares the one
+   buffer that silenced the whole mix several times a second whenever the writer was late - the
+   reason it was heard as low-volume, radio-like audio in menus and in matches. The mixer now plays
+   the previous lap at full level and fades through zero only across the instant the content
+   changes (a 2 ms notch). `tools/audiotest/StreamSim.c` reproduces the game's buffer and stall
+   pattern and measures it: 13-30 % of the output silent and 1.5 dB of level gone before, 0 % and
+   0.04 dB now, with the boundary clicks (534 per 20 s) down to 2. Host tests pass; **not heard on
+   a device and no APK built from this tree** (no NDK/SDK and no game inputs in that session).
+   The writer's skips themselves remain: they are the guest-lock stalls described next, and the
+   safepoint scheme is what keeps them small. Everything the game plays - music and menu SFX alike - streams through ONE 73728-byte,
    48 kHz 6-channel looping DirectSound buffer; there are no secondary buffers. The game's
    single audio-writer thread stalls for 100-300 ms during menu loads (Retroid; 40-113 ms on the
    Mac), and on wake its stream writer SKIPS the region it could not write: 11-16% of Locks start
@@ -471,8 +481,8 @@ Two commits:
 
 `VT3_TRACE_AUDIO=1`, once a second, now prints: playing buffers, peak, underruns, **starved**, ring
 fill, gap, resyncs, **guest lock takes/avg/max**, and per buffer: locks, plays, below-full gate ms,
-stale events and their byte, **grace-held ms**, **writer-skipped regions and their audio duration**,
-read-behind. `VT3_DS_NO_GATE=1` still pins the gate open for A/B.
+stale events and their byte, **writer-skipped regions and their audio duration**, read-behind.
+`VT3_DS_NO_GATE=1` still ignores the write marks for A/B.
 
 ### Android lifecycle (phase 4)
 
@@ -506,9 +516,10 @@ Not run, and required before claiming anything about the sound: `python build.py
 
 ### Remaining limitations / device tests owed
 
-1. **The grace is a perceptual change that has not been heard.** 3 ms is chosen from the measured
-   writer-gap percentiles, not from listening. If it smears transients (`VT3_DS_NO_GATE=1` A/B), the
-   value is one constant in `dsound.h`.
+1. ~~The grace is a perceptual change that has not been heard.~~ Superseded 2026-11-28: the grace
+   is gone. An unrewritten block is played (the previous lap) and only the content change is
+   notched; `StreamSim` measures the level instead of the ear (`docs/audio-pipeline.md`). Still to
+   hear on a device.
 2. **Skipped writes are still unrecoverable.** The trace now separates them from sink trouble, but a
    region the game never wrote cannot be mixed. The worst menu loads still hold the guest lock in one
    unbroken 100-456 ms run with no shim call to hand off at; that is guest code, not this layer.

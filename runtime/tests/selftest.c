@@ -182,23 +182,24 @@ static void test_dsound_mixer(void)
     CHECK(n == 2 && acc[0] == -32768 && acc[2] == -128,
           "8-bit half-rate interpolation: n=%u, %d %d", n, acc[0], acc[2]);
 
-    /* A block the game has not written keeps the gate shut: the old audio is never replayed
-     * (the repeats e8d1a37 removed), and Play starts with the gate closed, so the start of a
-     * sound is silent rather than a mid-waveform click. */
+    /* A block the game has not rewritten holds the previous lap, and it is played. Silencing it
+     * (what this mixer did) ducked the whole mix whenever the game's single audio thread was
+     * late, which is heard as quiet, radio-like audio; the level must survive. */
     int16_t loud[128];
     for (int i = 0; i < 128; i++) loud[i] = 10000;
     uint8_t fresh[1] = { 0 };                     /* 256 bytes = one FRESH_BLOCK, unwritten */
     memset(acc, 0, sizeof acc);
-    st = (ds_mix_state){ 0, UINT32_MAX, 0 };      /* as Play leaves it: gate closed */
+    st = (ds_mix_state){ 0, UINT32_MAX, VT3_MIX_GATE_MAX };
     n = ds_mix_render(acc, 32, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
                       ds_mix_step(48000), 1.0, 1.0, &st);
-    int silent = (n == 32);
-    for (int j = 0; j < 32; j++) silent &= (acc[2 * j] == 0 && acc[2 * j + 1] == 0);
-    CHECK(silent, "a stale block with the gate closed must stay silent");
-    CHECK(st.gate == 0, "gate on a stale block: %d", st.gate);
+    int held = (n == 32);
+    for (int j = 0; j < 32; j++) held &= (acc[2 * j] == 10000);
+    CHECK(held, "an unwritten block plays at full level: first %d", acc[0]);
+    CHECK(st.gate == VT3_MIX_GATE_MAX, "the gate stays open on the previous lap: %d", st.gate);
+    CHECK(st.stale == 1 && st.stale_events == 1, "the previous-lap stretch is counted once");
 
-    /* Fade-in: fresh data ramps the gate up over 2 ms without a step larger than the ramp. */
-    fresh[0] = 1;
+    /* Play still starts with the gate closed: the start of a sound fades in, not a step. */
+    st.gate = 0;
     memset(acc, 0, sizeof acc);
     n = ds_mix_render(acc, 128, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
                       ds_mix_step(48000), 1.0, 1.0, &st);
@@ -207,23 +208,26 @@ static void test_dsound_mixer(void)
     fade_in &= (acc[2 * 127] == 10000);
     CHECK(fade_in, "fade-in: first %d, last %d", acc[0], acc[2 * 127]);
 
-    /* Fade-out: once the late-write grace has passed, a block the game stops writing dips
-     * smoothly to silence instead of cutting. The grace is what the fade-in above re-armed. */
-    fresh[0] = 0;
-    CHECK(st.grace == VT3_MIX_GRACE_FRAMES, "fade-in re-arms the grace: %u", st.grace);
+    /* Where freshly written audio meets the previous lap, the content changes: a 2 ms notch
+     * through zero hides the step, and the level is full again one ramp later. */
+    uint8_t mixed[2] = { 1, 0 };                  /* 512 bytes: block 0 written, block 1 not */
+    int16_t loud2[256];
+    for (int i = 0; i < 256; i++) loud2[i] = 10000;
     memset(acc, 0, sizeof acc);
-    n = ds_mix_render(acc, VT3_MIX_GRACE_FRAMES, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1,
-                      fresh, ds_mix_step(48000), 1.0, 1.0, &st);
-    CHECK(n == VT3_MIX_GRACE_FRAMES && acc[0] == 10000 && st.grace == 0,
-          "the grace holds the gate open before a fade-out: %d, grace %u", acc[0], st.grace);
-    memset(acc, 0, sizeof acc);
-    n = ds_mix_render(acc, 128, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
+    st = (ds_mix_state){ 0, UINT32_MAX, VT3_MIX_GATE_MAX };
+    n = ds_mix_render(acc, 256, (const uint8_t *)loud2, sizeof loud2, 1, 16, 2, 1, mixed,
                       ds_mix_step(48000), 1.0, 1.0, &st);
-    int fade_out = (n == 128) && acc[0] < 10000 && acc[0] > 9000;   /* the first step of the ramp */
-    for (int j = 1; j < 96; j++) fade_out &= (acc[2 * j] <= acc[2 * (j - 1)]);
-    for (int j = 96; j < 128; j++) fade_out &= (acc[2 * j] == 0);
-    CHECK(fade_out, "fade-out: first %d, at 95 %d", acc[0], acc[2 * 95]);
-    CHECK(st.gate == 0, "gate after fading out: %d", st.gate);
+    int notch = (n == 256) && acc[2 * 127] <= 150 && acc[2 * 128] == 0;
+    int maxstep = 0;
+    for (int j = 1; j < 256; j++) {
+        int dd = acc[2 * j] - acc[2 * (j - 1)];
+        if (dd < 0) dd = -dd;
+        if (dd > maxstep) maxstep = dd;
+    }
+    notch &= (maxstep <= 150);
+    notch &= (acc[2 * 224] == 10000 && acc[2 * 255] == 10000);
+    CHECK(notch, "content change is a 2 ms notch: %d, %d, step %d, after %d",
+          acc[2 * 127], acc[2 * 128], maxstep, acc[2 * 224]);
 
     /* Leaving a block clears its mark, so each write plays exactly once. */
     static const uint8_t ramp8[512] = { 0 };      /* 512 bytes = two blocks */
@@ -272,39 +276,22 @@ static void test_dsound_mixer(void)
                       ds_mix_step(48000), 1.0, 1.0, &st);
     CHECK(n == 1 && acc[0] == 6656 && acc[1] == 8363, "surround fold: got %d %d", acc[0], acc[1]);
 
-    /* Late-write grace: the game's writer can finish an Unlock a few output frames after the
-     * mixer crossed into the block (it competed for the guest lock). The gate stays open for
-     * VT3_MIX_GRACE_FRAMES once per stale stretch, so that write costs nothing; a write that
-     * never comes still closes the gate, so old audio is not replayed. */
+    /* A writer that lands late: the block is unmarked for a while and then written. The audio
+     * played meanwhile is the previous lap at full level - no level is lost - and the late write
+     * is played as soon as it arrives. */
     fresh[0] = 0;                                 /* unwritten */
     memset(acc, 0, sizeof acc);
     st = (ds_mix_state){ 0, UINT32_MAX, VT3_MIX_GATE_MAX };
-    st.grace = VT3_MIX_GRACE_FRAMES;
-    n = ds_mix_render(acc, 1, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
-                      ds_mix_step(48000), 1.0, 1.0, &st);
-    CHECK(n == 1 && acc[0] == 10000 && st.gate == VT3_MIX_GATE_MAX &&
-              st.grace == VT3_MIX_GRACE_FRAMES - 1,
-          "late-write grace holds the gate open: %d, grace %u", acc[0], st.grace);
-
-    memset(acc, 0, sizeof acc);
-    n = ds_mix_render(acc, VT3_MIX_GRACE_FRAMES, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1,
-                      fresh, ds_mix_step(48000), 1.0, 1.0, &st);
-    CHECK(st.grace == 0 && st.stale == 1, "the grace must end: grace %u stale %d", st.grace, st.stale);
-
-    /* A write that lands inside the grace is played at full level, and re-arms the grace. */
-    fresh[0] = 0;
-    memset(acc, 0, sizeof acc);
-    st = (ds_mix_state){ 0, UINT32_MAX, VT3_MIX_GATE_MAX };
-    st.grace = VT3_MIX_GRACE_FRAMES;
     ds_mix_render(acc, 16, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
                   ds_mix_step(48000), 1.0, 1.0, &st);
-    fresh[0] = 1;                                 /* the writer lands late, inside the grace */
+    CHECK(st.stale == 1 && st.gate == VT3_MIX_GATE_MAX,
+          "a stale stretch keeps the level: stale %d gate %d", st.stale, st.gate);
+    fresh[0] = 1;                                 /* the writer lands late */
     memset(acc, 0, sizeof acc);
     n = ds_mix_render(acc, 16, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
                       ds_mix_step(48000), 1.0, 1.0, &st);
-    CHECK(n == 16 && acc[0] == 10000 && st.gate == VT3_MIX_GATE_MAX &&
-              st.grace == VT3_MIX_GRACE_FRAMES,
-          "a write inside the grace is played: %d, grace %u", acc[0], st.grace);
+    CHECK(n == 16 && acc[0] == 10000 && st.gate == VT3_MIX_GATE_MAX && st.stale == 0,
+          "a late write is played at full level: %d, stale %d", acc[0], st.stale);
 
     /* Skipped-region accounting: the bytes between one Unlock's end and the next one's start
      * are content the writer never produced. The mixer cannot recover them; the trace counts

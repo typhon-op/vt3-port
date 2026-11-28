@@ -53,6 +53,7 @@ build lifecycle      tools/touchtest/LifecycleHostTest.c runtime/src/core/guest.
                      runtime/src/core/log.c --
 build audio          tools/audiotest/AudioHostTest.c runtime/src/audio/mix_core.c \
                      runtime/src/audio/ringbuf.c -- -lm -lpthread
+build streamsim      tools/audiotest/StreamSim.c runtime/src/audio/mix_core.c -- -lm
 
 printf '\nhost tests (%s)\n' "$cc"
 printf '  %s\n' "--------------------------------------------------------------------------------"

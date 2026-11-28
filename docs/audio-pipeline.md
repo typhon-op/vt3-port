@@ -109,6 +109,40 @@ Not changed, because the audit found them correct: the Q32 phase stepper (48 kHz
 44.1 kHz drifts by less than one source frame per 0.1 s), the linear interpolation, the 8-bit and
 surround conversions, `SetFrequency` rebasing, the pan law, and the ring's SPSC memory ordering.
 
+## The stale-block gate, and why the audio sounded like a low-volume radio (2026-11-28)
+
+Every sound the game makes - menu music, menu SFX, match music, racket and ball, the crowd -
+streams through **one** 128 ms looping buffer written by one guest thread, so anything that
+mistreats that buffer mistreats the whole mix.
+
+The mixer used to do this: a block the game had not rewritten since the mixer last played it was
+**faded to silence**. The intent was good (never replay the previous lap, e8d1a37's property) but
+the cost was not: when the game's audio thread missed its write deadline - which the guest lock
+made it do constantly, 100-456 ms at a menu load - the mixer faded the *entire* output to zero for
+the length of the missed region, several times a second. `StreamSim` measures that on the
+documented stall pattern as **13-30 % of the output silent, 1.5 dB of RMS gone**, and the repo's
+own device numbers agree (130-427 ms of below-full gate per second in a menu, 0.9-1.7 s a minute in
+a match). That is the reported symptom: thin, quiet, choppy, radio-like audio in menus *and* in
+matches, with the level collapsing at exactly the moments the engine is busiest.
+
+`VT3_DS_NO_GATE=1` (play the buffer as it stands) kept the level but stepped between two laps and
+clicked. Neither policy was right, because the choice they offered - silence or a hard switch - is
+not the choice a sound card makes.
+
+**The fix.** A block the game has not rewritten holds the previous lap: the same continuous audio,
+128 ms earlier. That is played, at full level, because it is what the buffer holds and what the
+hardware would play. The only artefact left to hide is the instant the content changes from one lap
+to the next, so the mixer fades through zero over 2 ms exactly at that boundary and back up over
+the next 2 ms (a notch). In steady state nothing changes: no stale block, no notch, and the 48 kHz
+path stays bit-exact. The measured result, same writer and same stalls: **0 % holes, level within
+0.04 dB of a stall-free writer, gate below full for under 0.1 % of frames**, and 534 clicks per
+20 s at the boundaries fall to 2.
+
+What this does *not* do is make the missing audio exist. When the writer skips a region, the player
+hears the previous lap for that region - the same thing a PC with DirectSound plays - instead of a
+hole. Removing the skips themselves is still the guest-lock work in
+[HANDOFF.md](HANDOFF.md) ("Menu gargle"); the safepoint scheme is what keeps that to a minimum.
+
 ## Buffers and scheduling
 
 | Piece | Value | Why |
@@ -119,8 +153,8 @@ surround conversions, `SetFrequency` rebasing, the pan law, and the ring's SPSC 
 | Mixer tick | 4 ms | Small enough that the ring is refilled long before it empties |
 | Tick cap | the ring's capacity (4608 frames) | A late tick fills the slack instead of discarding audio |
 | Re-anchor | 250 ms behind, prime 10 ms | Beyond the ring there is nothing to catch up to |
-| Gate ramp | 96 frames (2 ms) | Hides a click on start, seek, stale audio |
-| Late-write grace | 144 frames (3 ms) | Covers a writer that is a few frames behind the block boundary |
+| Gate ramp | 96 frames (2 ms) | Fade-in at Play/seek, and the length of the content-change notch |
+| Notch | 2 ms, only where the content changes | Hides the step between a fresh block and the previous lap |
 | Reopen watchdog | 200 ms, immediate on a state change | Retries a lost stream without depending on the game producing frames |
 
 Latency is therefore one device buffer plus a tick plus the ring's steady-state occupancy, not
@@ -128,13 +162,21 @@ the ring's capacity.
 
 ## What is verified, and where
 
-`tools/audiotest/AudioHostTest.c` (80 checks, no device, no game data) covers the parts that are
+`tools/audiotest/AudioHostTest.c` (83 checks, no device, no game data) covers the parts that are
 pure arithmetic: ring wraparound/occupancy/peak/reset, a threaded producer-consumer run over
 262144 words and thousands of wraps, the rate conversion (48 kHz bit-exact, 24/44.1 kHz
-interpolated, loop wrap, 8-bit, quad), the gate (fade-in, grace, stale close, ramp shape),
-`ds_mix_reset`, the output stage (bit-identical at 100 %, saturation instead of wrap, mute), the
-tick plan (on time, late, ring-full, cap, re-anchor, ancient timeline) and the pause clock
-(freeze, repeated pause, exact shift, no double shift).
+interpolated, loop wrap, 8-bit, quad), the gate (fade-in, previous-lap playback at full level, the
+content-change notch, `ds_mix_reset`), the output stage (bit-identical at 100 %, saturation instead
+of wrap, mute), the tick plan (on time, late, ring-full, cap, re-anchor, ancient timeline) and the
+pause clock (freeze, repeated pause, exact shift, no double shift).
+
+`tools/audiotest/StreamSim.c` drives the real mixer with a model of the game's actual buffer: one
+73728-byte, 48 kHz, six-channel, 128 ms looping buffer, written a sixth of it at a time with the
+80 ms lead the game keeps, by a writer that misses its slots the way the guest-lock stalls make it
+(docs say 40-113 ms on the Mac, 100-300 ms on the Retroid). It measures output level, holes, and
+the frames the gate spends below full, and fails if a starved writer costs the level. That is the
+harness that measured the stale-block gate: 13-30 % of the output silent and 1.5 dB of level gone;
+with the notch policy, 0 % holes and the clean-writer level to 0.04 dB.
 
 `runtime/tests/selftest.c` keeps its checks on the same functions (it links `mix_core.c` through
 the shim); `vt3selftest_android` runs it on a device.
@@ -148,8 +190,8 @@ stream comes back with the game stalled (see the checks below).
 callback's actual burst size and scheduling, whether `setpriority(-16)` is granted (it is logged
 once), route changes, and the end-to-end latency. The device checks are:
 
-- `VT3_TRACE_AUDIO=1` and look for `underruns`, `starved`, `ring-full drops`, `stale` events,
-  `grace-held`, and `read-behind ms` once a second;
+- `VT3_TRACE_AUDIO=1` and look for `underruns`, `starved`, `ring-full drops`, `stale` events
+  (previous-lap stretches), `below-full gate ms` and `read-behind ms` once a second;
 - the `audio_ring_ms` / `audio_ring_used_ms` / `audio_ring_peak_ms` counters in the diagnostics
   report (a peak near the capacity means the device fell behind, a used level near 0 means the
   mixer did);
@@ -172,9 +214,10 @@ the sound. Two couplings remain, and they are reported here for the next stage r
    (`vt3_platform_pump_events()` keeps calling `vt3_audio_recover()` as a fast retry when the game
    is running, not as the mechanism).
 2. The game's own audio writer runs on its own thread in some paths and on the frame loop in
-   others. If a write arrives more than the 3 ms grace after the mixer crosses its block, the gate
-   dips for 2 ms. The 50 ms write lead normally makes this impossible; at a very low frame rate it
-   is the first thing to check, and `stale` events in the trace are how to see it.
+   others. If it is later than the 80 ms lead the game keeps, the mixer plays the previous lap for
+   the missed region (level preserved) and notches for 2 ms where the content changes; a region
+   that is *never* written is still content the game did not produce. `stale` events in the trace
+   are how to see how often, and `StreamSim` is how to price it on a host.
 
 The mixer's 4 ms `nanosleep` is relative, so its wake-ups jitter with its own work time; the
 schedule is corrected by the frame plan on every tick, so no drift accumulates, but an absolute

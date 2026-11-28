@@ -80,7 +80,7 @@ typedef struct ds_buffer {
     uint32_t write_skips;        /* trace: Unlocks that did not continue where the last one ended */
     uint64_t write_gap_bytes;    /* trace: bytes those skips never wrote */
     uint32_t trace_dip_frames;   /* trace: below-full gate frames accumulated since the last report */
-    uint32_t trace_stale_events, trace_stale_blk, trace_grace_frames;
+    uint32_t trace_stale_events, trace_stale_blk;
     uint32_t n_locks, n_plays;   /* trace: how often the game wrote and played this buffer */
     uint32_t obj;                /* guest object id, as the per-event trace prints it */
 } ds_buffer;
@@ -423,7 +423,6 @@ static int job_snapshot_locked(ds_buffer *b, ds_mix_job *j, uint64_t t0)
     j->st.phase = (uint64_t)(start * 4294967296.0);
     j->st.dip_frames = 0;         /* per-chunk diagnostics; the trace accumulates them */
     j->st.stale_events = 0;
-    j->st.grace_frames = 0;
     double gain = ds_mix_volume(b->volume), gl, gr;
     ds_mix_pan(b->pan, &gl, &gr);
     j->gl = gl * gain;
@@ -460,11 +459,9 @@ static void job_commit_locked(ds_mix_job *j)
         b->mix = j->st;
         b->mix.dip_frames = 0;
         b->mix.stale_events = 0;
-        b->mix.grace_frames = 0;
         b->trace_dip_frames += j->st.dip_frames;
         b->trace_stale_events += j->st.stale_events;
         if (j->st.stale) b->trace_stale_blk = j->st.stale_blk;
-        b->trace_grace_frames += j->st.grace_frames;
         if (j->finished) {
             b->playing = 0;
             b->pos = 0;
@@ -498,7 +495,7 @@ static void raise_mixer_priority(void)
 /* One buffer's line of the once-a-second trace, gathered under g_mu and printed after it. */
 typedef struct mix_trace_stat {
     uint32_t obj, bytes, rate, ch, bits, locks, plays, below_full_ms, stale_events, stale_byte;
-    uint32_t behind_ms, skipped, skipped_ms, grace_ms;
+    uint32_t behind_ms, skipped, skipped_ms;
     int looping, playing;
 } mix_trace_stat;
 
@@ -632,14 +629,12 @@ static void *mix_thread(void *arg)
                         s->below_full_ms = b->trace_dip_frames / (MIX_RATE / 1000u);
                         s->stale_events = b->trace_stale_events;
                         s->stale_byte = b->trace_stale_blk * FRESH_BLOCK;
-                        s->grace_ms = b->trace_grace_frames / (MIX_RATE / 1000u);
                         s->skipped = __atomic_load_n(&b->write_skips, __ATOMIC_RELAXED);
                         uint64_t gb = __atomic_load_n(&b->write_gap_bytes, __ATOMIC_RELAXED);
                         s->skipped_ms = (uint32_t)(gb * 1000u / (buf_bps(b) ? buf_bps(b) : 1u));
                         s->behind_ms = behind * 1000u / (buf_bps(b) ? buf_bps(b) : 1u);
                         b->trace_dip_frames = 0;
                         b->trace_stale_events = 0;
-                        b->trace_grace_frames = 0;
                         __atomic_store_n(&b->write_skips, 0, __ATOMIC_RELAXED);
                         __atomic_store_n(&b->write_gap_bytes, 0, __ATOMIC_RELAXED);
                         skips += s->skipped;
@@ -673,11 +668,11 @@ static void *mix_thread(void *arg)
                 for (int i = 0; i < nact; i++) {
                     mix_trace_stat *s = &stats[i];
                     VT3_INFO("audio:   0x%08x %u B %u Hz x%u ch %u bit loop %d playing %d, "
-                             "locks %u plays %u, below-full gate %u ms, stale %u events at byte %u, "
-                             "grace-held %u ms, writer skipped %u regions (%u ms), read-behind %u ms",
+                             "locks %u plays %u, below-full gate %u ms, stale (previous-lap) "
+                             "%u events at byte %u, writer skipped %u regions (%u ms), read-behind %u ms",
                              s->obj, s->bytes, s->rate, s->ch, s->bits, s->looping, s->playing,
                              s->locks, s->plays, s->below_full_ms, s->stale_events, s->stale_byte,
-                             s->grace_ms, s->skipped, s->skipped_ms, s->behind_ms);
+                             s->skipped, s->skipped_ms, s->behind_ms);
                 }
             }
         } else {

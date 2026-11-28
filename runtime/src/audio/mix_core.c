@@ -36,10 +36,10 @@ void ds_mix_reset(ds_mix_state *st)
     st->gate = 0;
     st->last_blk = UINT32_MAX;
     st->stale = 0;
-    st->grace = VT3_MIX_GRACE_FRAMES;
+    st->notch_left = 0;
+    st->notch_len = 0;
     st->dip_frames = 0;
     st->stale_events = 0;
-    st->grace_frames = 0;
 }
 
 /* A signed 16-bit value from one 8- or 16-bit PCM sample. */
@@ -65,6 +65,7 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
     if (src_frames == 0 || step_q32 == 0 || nch == 0 || (bits != 8 && bits != 16)) return 0;
     uint32_t bpsamp = bits / 8;
     uint64_t wrap = (uint64_t)src_frames << 32;
+    uint32_t nblocks = (uint32_t)((bytes + VT3_MIX_FRESH_BLOCK - 1) / VT3_MIX_FRESH_BLOCK);
     uint32_t j;
     for (j = 0; j < frames; j++) {
         uint64_t phase = st->phase;
@@ -75,45 +76,60 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
         uint32_t f = (uint32_t)(phase >> 32);
 
         /* The game's writes mark the FRESH_BLOCK blocks they cover (Unlock); the mixer clears
-         * a block as it leaves it, so each write plays once. A block the game has not written
-         * since the mixer last played it is stale: its gate fades to silence instead of
-         * cutting to it (a click) or replaying the old audio (the repeats e8d1a37 removed). */
+         * a block as it leaves it, so it knows which blocks hold audio written for this lap.
+         * A block the game has not rewritten since holds the PREVIOUS lap: the same continuous
+         * sound 128 ms earlier. That is played, because it is what the buffer holds and what a
+         * sound card would play - silencing it instead ducks the whole mix several times a
+         * second (every sound the game makes shares this one buffer), which is heard as thin,
+         * quiet, radio-like audio. The only thing that has to be hidden is the instant the
+         * content changes from one lap to the other: a 2 ms fade-out and fade-in across that
+         * boundary, so the step has no click. */
         int32_t target = VT3_MIX_GATE_MAX;
         uint32_t blk = (uint32_t)((f * (uint64_t)align) / VT3_MIX_FRESH_BLOCK);
-        if (fresh) {
+        if (fresh && nblocks) {
+            if (blk >= nblocks) blk = nblocks - 1;
             if (blk != st->last_blk) {
-                if (st->last_blk != UINT32_MAX) __atomic_store_n(&fresh[st->last_blk], 0, __ATOMIC_RELAXED);
+                if (st->last_blk != UINT32_MAX && st->last_blk < nblocks)
+                    __atomic_store_n(&fresh[st->last_blk], 0, __ATOMIC_RELAXED);
                 st->last_blk = blk;
             }
             /* Acquire, pairing with the write's release: the game's samples must be visible
-             * once the flag is. A missed mark only extends the dip by one ramp. */
-            if (!__atomic_load_n(&fresh[blk], __ATOMIC_ACQUIRE)) {
-                /* The writer may be a few output frames behind this block boundary: it just
-                 * waited for a guest lock, and the mixer got there first. Hold the gate open
-                 * for VT3_MIX_GRACE_FRAMES once per stale stretch, so that a write landing
-                 * inside the grace costs nothing. A write that never comes still closes the
-                 * gate, so old audio is never replayed (e8d1a37's property). */
-                if (!st->stale && st->grace > 0) {
-                    st->grace--;
-                    st->grace_frames++;
-                } else {
-                    target = 0;
-                }
+             * once the flag is. */
+            int cur = __atomic_load_n(&fresh[blk], __ATOMIC_ACQUIRE) != 0;
+            /* Trace: count each continuous stretch of previous-lap audio once, at the block
+             * that began it, so a per-second summary aligns with the game's write times. */
+            if (!cur) {
+                if (!st->stale) { st->stale = 1; st->stale_events++; st->stale_blk = blk; }
             } else {
-                st->grace = VT3_MIX_GRACE_FRAMES;
+                st->stale = 0;
             }
-        }
-        /* Trace: count each continuous stretch of stale silence once, at the block that
-         * caused it, so a per-second summary can be aligned with the game's write times. */
-        if (target == 0) {
-            if (!st->stale) { st->stale = 1; st->stale_events++; st->stale_blk = blk; }
-        } else {
-            st->stale = 0;
+            /* The first frame past this block, and who wrote the block after it: a difference
+             * is a change of content, and the notch is armed for the last ramp before it. */
+            uint32_t edge = (uint32_t)(((uint64_t)(blk + 1) * VT3_MIX_FRESH_BLOCK + align - 1) / align);
+            uint32_t after = blk + 1;
+            if (after >= nblocks) after = looping ? 0 : blk;
+            int next_fresh = cur;
+            if (after != blk && after < nblocks)
+                next_fresh = __atomic_load_n(&fresh[after], __ATOMIC_RELAXED) != 0;
+            uint32_t until_edge = edge > f ? edge - f : 0;
+            if (next_fresh != cur && st->notch_left == 0 && until_edge && until_edge <= VT3_MIX_RAMP_FRAMES) {
+                st->notch_len = until_edge;
+                st->notch_left = 2u * until_edge;   /* fade out to the boundary, then back in */
+            }
         }
         int32_t gate = st->gate;
         if (gate < target)      { gate += MIX_GATE_STEP; if (gate > target) gate = target; }
         else if (gate > target) { gate -= MIX_GATE_STEP; if (gate < target) gate = target; }
         st->gate = gate;
+        /* The content-change notch, as a Q15 factor on top of the gate: it reaches zero exactly
+         * at the boundary the content changes on, and is back to full one ramp later. */
+        if (st->notch_left) {
+            uint32_t p = 2u * st->notch_len - st->notch_left;   /* 0 .. 2*notch_len-1 */
+            uint32_t k = p < st->notch_len ? st->notch_len - p : p - st->notch_len;
+            int32_t n = (int32_t)((uint64_t)VT3_MIX_GATE_MAX * k / st->notch_len);
+            gate = (int32_t)(((int64_t)gate * n) >> 15);
+            st->notch_left--;
+        }
         if (gate < VT3_MIX_GATE_MAX) st->dip_frames++;   /* trace: frames below full gate */
 
         if (gate) {

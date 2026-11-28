@@ -5,8 +5,9 @@
  *                           peak watermark, reset, and a threaded producer/consumer run that
  *                           checks every byte across thousands of wraps.
  *   - src/audio/mix_core.c  what one output frame sounds like: rate conversion (48 kHz bit-exact,
- *                           44.1/24/22.05 kHz interpolated, loop wrap), the write gate and its
- *                           late-write grace, the master/output stage, the tick schedule (late
+ *                           44.1/24/22.05 kHz interpolated, loop wrap), the write gate (fade-in,
+ *                           previous-lap playback, the content-change notch), the master/output
+ *                           stage, the tick schedule (late
  *                           ticks, ring overrun, timeline re-anchor) and the pause clock.
  *
  * What it cannot check is the device side: AAudio open/pause/reopen, the callback's own timing and
@@ -246,34 +247,49 @@ static void test_gate(void)
     for (int j = 1; j < 96; j++) if (acc[2 * j] < acc[2 * (j - 1)]) monotone = 0;
     ok(monotone, "the fade-in only ever rises");
 
-    /* A block the game never writes stays silent after the late-write grace, and the transition
-     * is a ramp, not a step: the largest sample-to-sample change is one ramp increment. */
+    /* An unwritten block holds the previous lap, and that is played: the mix must not duck
+     * because the game's writer is late. This is the property the old fade-to-silence policy
+     * broke - all of the game's sound shares one buffer, so silencing it silenced everything. */
     memset(fresh, 0, sizeof fresh);
     ds_mix_reset(&st);
     st.phase = 0;
+    st.gate = VT3_MIX_GATE_MAX;
     memset(acc, 0, sizeof acc);
-    n = ds_mix_render(acc, VT3_MIX_GRACE_FRAMES + VT3_MIX_RAMP_FRAMES + 8,
-                      (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
+    n = ds_mix_render(acc, 64, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, fresh,
                       ds_mix_step(48000), 1.0, 1.0, &st);
-    ok(n > 0, "the stale-block test renders");
-    ok(acc[2 * (VT3_MIX_GRACE_FRAMES - 1)] >= 32000, "the grace keeps the gate open while it lasts");
-    ok(acc[2 * (VT3_MIX_GRACE_FRAMES + VT3_MIX_RAMP_FRAMES)] == 0,
-       "an unwritten block ends in silence");
+    ok(n == 64, "the previous-lap test renders");
+    ok(acc[0] == 32767 && acc[2 * 63] == 32767, "an unwritten block plays at full level");
+    ok(st.stale == 1 && st.stale_events == 1, "the previous-lap stretch is counted once");
+    ok(st.gate == VT3_MIX_GATE_MAX, "playing on through an unwritten block leaves the gate open");
+
+    /* The content changes where a written block meets an unwritten one: the mixer fades through
+     * zero exactly at that boundary and back up, so two different laps never step into each
+     * other as a click, and the level after it is full again. */
+    uint8_t mixed[2] = { 1, 0 };             /* block 0 written, block 1 not */
+    ds_mix_reset(&st);
+    st.phase = 0;
+    st.gate = VT3_MIX_GATE_MAX;
+    memset(acc, 0, sizeof acc);
+    n = ds_mix_render(acc, 256, (const uint8_t *)loud, sizeof loud, 1, 16, 2, 1, mixed,
+                      ds_mix_step(48000), 1.0, 1.0, &st);
+    ok(n == 256, "the content-change test renders");
+    ok(acc[2 * 127] <= 400 && acc[2 * 128] == 0, "the notch reaches zero at the boundary");
     int maxstep = 0;
     for (int j = 1; j < (int)n; j++) {
         int d = acc[2 * j] - acc[2 * (j - 1)];
         if (d < 0) d = -d;
         if (d > maxstep) maxstep = d;
     }
-    ok(maxstep <= 400, "the gate closes with a 2 ms ramp, not a click");
-    ok(st.stale == 1 && st.stale_events == 1, "the stale stretch is counted once");
+    ok(maxstep <= 400, "the notch is a 2 ms ramp, not a click");
+    ok(acc[2 * 224] == 32767 && acc[2 * 255] == 32767,
+       "the level is back to full one ramp after the content change");
 
     /* ds_mix_reset clears every field, whatever the buffer held before. */
     memset(&st, 0xAB, sizeof st);
     ds_mix_reset(&st);
     ok(st.gate == 0 && st.last_blk == UINT32_MAX && st.stale == 0 &&
-       st.grace == VT3_MIX_GRACE_FRAMES && st.dip_frames == 0 && st.stale_events == 0 &&
-       st.grace_frames == 0, "ds_mix_reset clears the playback state");
+       st.notch_left == 0 && st.notch_len == 0 && st.dip_frames == 0 && st.stale_events == 0,
+       "ds_mix_reset clears the playback state");
 }
 
 /* ---- output stage -------------------------------------------------------------------- */
