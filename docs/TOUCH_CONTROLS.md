@@ -21,6 +21,29 @@ minimal set of vector controls in the style of [rokobuljan/gamepad](https://gith
 The colours are the Xbox palette (A green, B red, X blue, Y yellow) at low alpha; `VT3_TOUCH_COLOR=0`
 draws them monochrome.
 
+## Menu mode: a compact d-pad while the game is in its own menu
+
+The game's own menus (tour, settings, the match sheets) read the pad's hat, and the match pad is
+mostly inert on them while covering the list the player is reading. So while the runtime sees one of
+them — the draw profile says "menu", or the port's own quick menu is up — the overlay switches to:
+
+```
+   ( cross )                                       [B]  [A]
+```
+
+* **D-pad cross** (lower-left) — a compact four-arm cross, the second visual for the same stick. The
+  direction of the touch is quantised to the hat, so a **tap on an arm steps once** (one 55 ms
+  press-and-release, which is what a menu needs to see), and holding it repeats (400 ms, then every
+  120 ms). The arm lights while its direction is held, including for a tap's pulse.
+* **A / B** (lower-right) — confirm and cancel, side by side, no X/Y diamond.
+* Nothing else is drawn or hit-tested: no shoulders, no SELECT/START pills, no swipe pad. The MENU
+  pill is absent on purpose, so it cannot sit over the game's own menu.
+
+The switch follows the d-pad mode itself (`vt3_mode_update`, 140 ms dwell) rather than the raw menu
+signal, so the picture changes exactly when the input starts stepping. In menu mode the stick's
+centre is the cross's centre even with the floating profile, since the cross does not move. The
+in-match layout is untouched — same code, same positions, same hit test.
+
 ## It hides itself when real hardware is in use
 
 If a **physical keyboard or gamepad** is connected/used, the controls disappear and no longer consume

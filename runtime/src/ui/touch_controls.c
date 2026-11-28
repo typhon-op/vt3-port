@@ -88,6 +88,7 @@ static struct {
     int      draws_at;
     unsigned draws_max;
     int      guest_menu;
+    int      menu_pad;      /* menu mode: the compact d-pad + A/B layout is on screen */
 
     uint32_t applied_mask;
     float    applied_lx, applied_ly;
@@ -327,6 +328,7 @@ void vt3_touch_reset(void)
     g.draws_at = 0;
     g.draws_max = 0;
     g.guest_menu = 0;
+    g.menu_pad = 0;
     memset(g.draws_ring, 0, sizeof g.draws_ring);
     free(g.v);
     g.v = NULL;
@@ -368,8 +370,57 @@ static int want_dpad(void)
 
 static const vt3_touch_ctl_cfg *ctl_cfg(int ctl) { return vt3_touch_cfg_ctl(&g.cfg, ctl); }
 
+/*
+ * Menu mode. While the game is showing one of its own menus the match pad is noise: nothing on it
+ * but the stick and the face buttons does anything, and the full set of rings and pills hides the
+ * list the player is trying to read. So the same controls shrink to a compact d-pad and A/B, low in
+ * the two corners, and they are still the same stick and the same two buttons underneath -- a tap
+ * on an arm is a direction, which the d-pad path already turns into exactly one pulse.
+ */
+static void menu_layout(void)
+{
+    float W = (float)g.logical_w, H = (float)g.logical_h;
+    float s = H / 1080.0f * g.user_scale;
+    g.s = s;
+
+    for (int i = 0; i < VT3_TC_COUNT; i++) {
+        const vt3_touch_ctl_cfg *c = ctl_cfg(i);
+        memset(&g.geo[i], 0, sizeof g.geo[i]);
+        g.present[i] = 0;
+        /* Size and position are the menu's own; only the user's opacity still applies. */
+        g.opacity[i] = c ? c->opacity : 1.0f;
+    }
+
+    /* The stick becomes the cross, in the corner where the thumb already rests. */
+    ctl_geom *q = &g.geo[VT3_TC_STICK];
+    q->r = 138.0f * s;
+    q->cx = 240.0f * s;
+    q->cy = H - 260.0f * s;
+    g.present[VT3_TC_STICK] = 1;
+
+    /* A and B side by side, no diamond and no X/Y: confirm and cancel are all a menu needs. */
+    float acx = W - 220.0f * s, acy = H - 270.0f * s;
+    q = &g.geo[VT3_TC_A];
+    q->r = 72.0f * s;
+    q->cx = acx;
+    q->cy = acy;
+    q = &g.geo[VT3_TC_B];
+    q->r = 72.0f * s;
+    q->cx = acx - 180.0f * s;
+    q->cy = acy;
+    g.present[VT3_TC_A] = g.present[VT3_TC_B] = 1;
+
+    /* Everything else is absent: no X/Y, no shoulders, no Select/Start pills, no swipe pad, and no
+     * MENU pill -- that one would sit over the top of the game's own menu it is meant to show. */
+}
+
 static void layout(void)
 {
+    if (g.menu_pad) {
+        menu_layout();
+        return;
+    }
+
     float W = (float)g.logical_w, H = (float)g.logical_h;
     float s = H / 1080.0f * g.user_scale;
     g.s = s;
@@ -449,7 +500,7 @@ static int candidates_at(float x, float y, int *cand, float *dist)
     /* The stick: a circle, or the floating profile's zone (the lower left of the screen). */
     if (g.present[VT3_TC_STICK]) {
         ctl_geom *q = &g.geo[VT3_TC_STICK];
-        if (prof && prof->floating) {
+        if (prof && prof->floating && !g.menu_pad) {
             if (x < g.logical_w * 0.55f && y > g.logical_h * 0.35f) {
                 cand[n] = VT3_TC_STICK;
                 dist[n++] = 0.0f;
@@ -680,8 +731,9 @@ void vt3_touch_pointer(int id, int down, float x, float y)
         p->ly = ly;
         const vt3_stick_cfg *prof = vt3_touch_cfg_profile(&g.cfg);
         if (ctl == VT3_TC_STICK) {
-            /* Floating: the stick's centre is where the thumb landed, inside the control zone. */
-            if (prof && prof->floating) {
+            /* Floating: the stick's centre is where the thumb landed, inside the control zone.
+             * The menu's cross is fixed, so its centre is the one it is drawn around. */
+            if (prof && prof->floating && !g.menu_pad) {
                 p->ax = lx;
                 p->ay = ly;
             } else {
@@ -788,6 +840,47 @@ static void draw_pill(float cx, float cy, float w, float h, const char *label, f
     g.shadow = 0;
 }
 
+/* The menu's d-pad: four arms inside the ring the match stick uses, so it still reads as the same
+ * control. An arm lights while its direction is held -- and for the 55 ms pulse a tap produces, so
+ * a single step is visible. */
+static void draw_menu_dpad(void)
+{
+    ctl_geom *q = &g.geo[VT3_TC_STICK];
+    float s = g.s;
+    float th = 3.2f * s;
+    if (th < 1.6f) th = 1.6f;
+    float a = g.alpha * g.opacity[VT3_TC_STICK];
+    float cx = q->cx, cy = q->cy, r = q->r;
+
+    for (int pass = 0; pass < 2; pass++) {
+        g.shadow = pass == 0;
+        emit_disc(cx, cy, r, rgba(255, 255, 255, (g.stick_held ? 0.16f : 0.08f) * a));
+        emit_ring(cx, cy, r, th, rgba(233, 238, 247, 0.55f * a));
+    }
+    g.shadow = 0;
+
+    static const uint32_t bit[4] = { VT3_BTN_UP, VT3_BTN_DOWN, VT3_BTN_LEFT, VT3_BTN_RIGHT };
+    static const float dx[4] = { 0.0f, 0.0f, -1.0f, 1.0f };
+    static const float dy[4] = { -1.0f, 1.0f, 0.0f, 0.0f };
+    float base = r * 0.20f, tip = r * 0.90f, half = r * 0.30f;
+    for (int i = 0; i < 4; i++) {
+        int on = (g.draw_mask & bit[i]) != 0;
+        uint32_t c = rgba(238, 242, 250, (on ? 0.95f : 0.32f) * a);
+        float px = -dy[i] * half, py = dx[i] * half;
+        float bx = cx + dx[i] * base, by = cy + dy[i] * base;
+        float tx = cx + dx[i] * tip, ty = cy + dy[i] * tip;
+        for (int pass = 0; pass < 2; pass++) {
+            g.shadow = pass == 0;
+            push_tri(bx + px, by + py, bx - px, by - py, tx, ty, c);
+        }
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        g.shadow = pass == 0;
+        emit_disc(cx, cy, r * 0.14f, rgba(238, 242, 250, 0.60f * a));
+    }
+    g.shadow = 0;
+}
+
 static void draw_controls(void)
 {
     float s = g.s;
@@ -801,7 +894,9 @@ static void draw_controls(void)
     uint32_t fill_p = rgba(255, 255, 255, 0.30f);
     uint32_t text   = rgba(238, 242, 250, 0.94f);
 
-    if (g.present[VT3_TC_STICK]) {
+    if (g.present[VT3_TC_STICK] && g.menu_pad) {
+        draw_menu_dpad();
+    } else if (g.present[VT3_TC_STICK]) {
         ctl_geom *q = &g.geo[VT3_TC_STICK];
         int sp = g.stick_held;
         for (int pass = 0; pass < 2; pass++) {
@@ -895,8 +990,6 @@ void vt3_touch_frame(int drawable_w, int drawable_h)
     vt3_gfx_view_rect(drawable_w, drawable_h, &g.dst);
     g.have_view = 1;
 
-    layout();
-
     /* Mode first: a change releases whatever the old mode held, so nothing sticks. */
     int changed = 0;
     int before = g.mode.mode;
@@ -907,6 +1000,11 @@ void vt3_touch_frame(int drawable_w, int drawable_h)
         release_state();
     }
 
+    /* Menu mode is the d-pad mode: the compact cross appears exactly when the stick starts stepping
+     * and goes when the game's menu does, so the picture and the input cannot disagree. */
+    g.menu_pad = now_mode == VT3_TOUCH_DPAD;
+
+    layout();
     apply_state();
 
     vt3_gfx_rt_bind(0);
