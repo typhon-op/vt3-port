@@ -197,6 +197,7 @@ static void test_dsound_mixer(void)
     CHECK(held, "an unwritten block plays at full level: first %d", acc[0]);
     CHECK(st.gate == VT3_MIX_GATE_MAX, "the gate stays open on the previous lap: %d", st.gate);
     CHECK(st.stale == 1 && st.stale_events == 1, "the previous-lap stretch is counted once");
+    CHECK(st.stale_frames == 32, "the trace counts the previous-lap frames: %u", st.stale_frames);
 
     /* Play still starts with the gate closed: the start of a sound fades in, not a step. */
     st.gate = 0;

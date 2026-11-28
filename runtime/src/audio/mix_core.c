@@ -40,6 +40,7 @@ void ds_mix_reset(ds_mix_state *st)
     st->notch_len = 0;
     st->dip_frames = 0;
     st->stale_events = 0;
+    st->stale_frames = 0;
 }
 
 /* A signed 16-bit value from one 8- or 16-bit PCM sample. */
@@ -100,6 +101,7 @@ uint32_t ds_mix_render(int32_t *acc, uint32_t frames, const uint8_t *data, uint3
              * that began it, so a per-second summary aligns with the game's write times. */
             if (!cur) {
                 if (!st->stale) { st->stale = 1; st->stale_events++; st->stale_blk = blk; }
+                st->stale_frames++;   /* trace: this output frame came from the previous lap */
             } else {
                 st->stale = 0;
             }

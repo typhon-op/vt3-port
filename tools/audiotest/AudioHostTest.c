@@ -260,6 +260,7 @@ static void test_gate(void)
     ok(n == 64, "the previous-lap test renders");
     ok(acc[0] == 32767 && acc[2 * 63] == 32767, "an unwritten block plays at full level");
     ok(st.stale == 1 && st.stale_events == 1, "the previous-lap stretch is counted once");
+    ok(st.stale_frames == 64, "the trace counts the previous-lap frames it played");
     ok(st.gate == VT3_MIX_GATE_MAX, "playing on through an unwritten block leaves the gate open");
 
     /* The content changes where a written block meets an unwritten one: the mixer fades through
@@ -288,7 +289,8 @@ static void test_gate(void)
     memset(&st, 0xAB, sizeof st);
     ds_mix_reset(&st);
     ok(st.gate == 0 && st.last_blk == UINT32_MAX && st.stale == 0 &&
-       st.notch_left == 0 && st.notch_len == 0 && st.dip_frames == 0 && st.stale_events == 0,
+       st.notch_left == 0 && st.notch_len == 0 && st.dip_frames == 0 && st.stale_events == 0 &&
+       st.stale_frames == 0,
        "ds_mix_reset clears the playback state");
 }
 

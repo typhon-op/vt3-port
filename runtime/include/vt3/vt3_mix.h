@@ -41,6 +41,7 @@ typedef struct ds_mix_state {
     int32_t stale;         /* trace: 1 while the mixer reads unmarked (previous-lap) audio */
     uint32_t notch_left;   /* frames left of the content-change notch, 0 when none is running */
     uint32_t notch_len;    /* frames of fade-out (and of fade-in) that notch is built from */
+    uint32_t stale_frames; /* trace: output frames played from the previous lap (cleared by the reader) */
 } ds_mix_state;
 
 /* Q32 phase step for rate_hz source frames per second against the 48 kHz output. At 48 kHz the

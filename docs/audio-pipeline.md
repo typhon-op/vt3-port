@@ -190,8 +190,11 @@ stream comes back with the game stalled (see the checks below).
 callback's actual burst size and scheduling, whether `setpriority(-16)` is granted (it is logged
 once), route changes, and the end-to-end latency. The device checks are:
 
-- `VT3_TRACE_AUDIO=1` and look for `underruns`, `starved`, `ring-full drops`, `stale` events
-  (previous-lap stretches), `below-full gate ms` and `read-behind ms` once a second;
+- `VT3_TRACE_AUDIO=1` and look for `underruns`, `starved`, `ring-full drops`, `previous-lap ms`
+  (how much of the last second was audio replayed from the previous lap, with the number of such
+  stretches after `in`), `below-full gate ms` and `read-behind ms` once a second. `previous-lap ms`
+  is the number that says whether the game's writer is still starving the mix: it should be 0 in
+  steady state, and its share of the second is what a listener hears as a stutter;
 - the `audio_ring_ms` / `audio_ring_used_ms` / `audio_ring_peak_ms` counters in the diagnostics
   report (a peak near the capacity means the device fell behind, a used level near 0 means the
   mixer did);
