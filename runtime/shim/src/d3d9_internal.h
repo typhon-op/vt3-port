@@ -70,6 +70,11 @@ static inline d3d9_host *d3d9_host_of(GPTR obj, uint32_t kind)   /* NULL unless 
     return idx < D3D9_MAX_HOST && g_d3d9_host[idx].kind == kind ? &g_d3d9_host[idx] : NULL;
 }
 void d3d9_obj_free(GPTR obj);
+/* Releases every remaining host object. A match's guest thread leaves by exiting inside its own
+ * stack, so it never calls Release: without this the slot table fills up over a few relaunches
+ * (every later CreateSoundBuffer or CreateTexture fails) and each match's host buffers leak.
+ * Called from the relaunch path while the guest arena and the renderer are still up. */
+void d3d9_obj_forget_all(void);
 void dsound_free(uint32_t kind, void *data);                   /* host data of a DirectSound object (dsound_stub.c) */
 void d3dx_obj_free(uint32_t kind, void *data);                 /* host data of an ID3DX object (d3dx9_compile.c) */
 /* DirectInput objects (dinput8.c): vtable method names for a kind (NULL for other kinds), and frees. */

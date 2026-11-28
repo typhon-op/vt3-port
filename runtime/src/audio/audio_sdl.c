@@ -151,6 +151,10 @@ int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
     out->sample_rate = a->fmt.sample_rate;
     out->underruns = atomic_load(&a->underruns);
     out->starved = atomic_load(&a->starved);
+    size_t per_ms = (size_t)a->fmt.sample_rate * a->frame_bytes / 1000u;
+    out->ring_ms = per_ms ? (uint32_t)(vt3_rb_capacity(a->rb) / per_ms) : 0;
+    out->ring_used_ms = per_ms ? (uint32_t)(vt3_rb_used(a->rb) / per_ms) : 0;
+    out->ring_peak_ms = per_ms ? (uint32_t)(vt3_rb_peak(a->rb) / per_ms) : 0;
     return 1;
 }
 

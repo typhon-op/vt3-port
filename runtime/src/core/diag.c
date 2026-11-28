@@ -20,7 +20,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define COUNTERS 16
+#define COUNTERS 24
 #define HIST_BUCKETS 128
 
 typedef struct diag_counter {
@@ -240,6 +240,9 @@ void vt3_diag_audio(const vt3_audio *a)
     c = find_counter("audio_open");             if (c) atomic_store(&c->value, info.open);
     c = find_counter("audio_rate");             if (c) atomic_store(&c->value, (long long)info.sample_rate);
     c = find_counter("audio_channels");         if (c) atomic_store(&c->value, info.channels);
+    c = find_counter("audio_ring_ms");          if (c) atomic_store(&c->value, info.ring_ms);
+    c = find_counter("audio_ring_used_ms");     if (c) atomic_store(&c->value, info.ring_used_ms);
+    c = find_counter("audio_ring_peak_ms");     if (c) atomic_store(&c->value, info.ring_peak_ms);
 }
 
 /* ---- snapshot ---------------------------------------------------------------- */

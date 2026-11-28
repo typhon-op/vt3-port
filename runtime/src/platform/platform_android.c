@@ -175,6 +175,7 @@ int vt3_platform_android_input(struct android_app *app, AInputEvent *e)
  * running and a new match starts from the menu.
  */
 void vt3_dsound_shutdown(void);
+void d3d9_obj_forget_all(void);
 void d3d9_gpu_shutdown(void);
 void vt3_input_init(void);
 void vt3_input_clear_keys(void);
@@ -190,8 +191,13 @@ static void reset_runtime_for_relaunch(void)
     vt3_menu_reset();
     vt3_input_init();
     vt3_input_clear_keys();
-    d3d9_gpu_shutdown();
+    /* In this order: the mixer stops before its buffers are released, the objects are released
+     * while the renderer can still free their GPU handles, and only then is the renderer shut
+     * down. Without the middle step every relaunch leaks a match's host objects, and after a few
+     * of them no new DirectSound or Direct3D object can be created at all. */
     vt3_dsound_shutdown();
+    d3d9_obj_forget_all();
+    d3d9_gpu_shutdown();
     vt3_diag_stop();
     VT3_CINFO("app", "runtime reset for a new match (renderer, audio, menu, touch, input)");
 }

@@ -30,6 +30,7 @@ struct vt3_audio {
     size_t frame_bytes;
     _Atomic int playing;
     _Atomic int paused;           /* the platform wants no sound (backgrounded, no window) */
+    _Atomic int have_stream;      /* a->stream is open: read from the mixer thread and the pump */
     _Atomic uint32_t underruns;   /* a callback got a partial buffer */
     _Atomic uint32_t starved;     /* a callback got nothing at all while playback was on */
     _Atomic uint64_t played;
@@ -39,6 +40,9 @@ struct vt3_audio {
 };
 
 static vt3_audio *g_open;        /* the one open output, for the platform pump's pause/recover */
+/* What the platform last asked for. Remembered even while there is no output, because an output
+ * opened during a background stretch must not start playing behind another app. */
+static _Atomic int g_platform_paused;
 
 static uint64_t now_ns(void)
 {
@@ -111,13 +115,22 @@ static int open_stream(vt3_audio *a)
         a->stream = NULL;
         return -1;
     }
+    atomic_store(&a->have_stream, 1);
     rc = AAudioStream_requestStart(a->stream);
     if (rc != AAUDIO_OK) {
         VT3_CERROR("audio", (int)rc, "AAudio start failed: %s", AAudio_convertResultToText(rc));
         vt3_diag_counter("audio_open_failures", 1);
         AAudioStream_close(a->stream);
         a->stream = NULL;
+        atomic_store(&a->have_stream, 0);
         return -1;
+    }
+    /* Started, then silenced if the app was already in the background: the ring is empty at this
+     * point, so pausing now plays nothing at all. */
+    if (atomic_load(&g_platform_paused)) {
+        aaudio_result_t pr = AAudioStream_requestPause(a->stream);
+        if (pr == AAUDIO_OK) atomic_store(&a->paused, 1);
+        else VT3_CWARN("audio", "pause on open failed: %s", AAudio_convertResultToText(pr));
     }
     VT3_CINFO("audio", "%u Hz, %d ch, S16 (AAudio), ring %zu bytes (%u ms), burst %d frames, "
               "buffer %d frames (%.1f ms), performance mode %d",
@@ -139,6 +152,7 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
     if (!a) return -1;
     a->fmt = fmt;
     a->frame_bytes = (size_t)fmt.channels * sizeof(int16_t);
+    atomic_store(&a->paused, atomic_load(&g_platform_paused));
     a->rb = vt3_rb_create(buffer_bytes);
     if (!a->rb) { free(a); return -1; }
     if (open_stream(a) != 0) {
@@ -162,27 +176,37 @@ int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
 
 void vt3_audio_pause(int paused)
 {
+    int want = paused ? 1 : 0;
+    atomic_store(&g_platform_paused, want);
     vt3_audio *a = g_open;
-    if (!a) return;
-    atomic_store(&a->paused, paused ? 1 : 0);
+    if (!a) return;                          /* remembered: the next open starts paused */
+    if (atomic_load(&a->paused) == want) return;   /* already in that state: no AAudio churn */
     if (!a->stream) {
         /* Nothing to pause. Resuming is a good moment to retry an output that never opened. */
+        atomic_store(&a->paused, want);
         if (!paused) atomic_store(&a->retry_at_ns, 0);
         return;
     }
     aaudio_result_t rc = paused ? AAudioStream_requestPause(a->stream)
                                 : AAudioStream_requestStart(a->stream);
-    if (rc != AAUDIO_OK)
+    if (rc != AAUDIO_OK) {
         VT3_CWARN("audio", "%s failed: %s", paused ? "pause" : "restart",
                   AAudio_convertResultToText(rc));
-    else
-        VT3_CINFO("audio", "output %s", paused ? "paused" : "resumed");
+        /* A resume the stream refuses means it is no longer in a state we can use (the device
+         * dropped it): the pump reopens it instead of the game staying silent for good. */
+        if (!paused) atomic_store(&a->lost, 1);
+        return;
+    }
+    atomic_store(&a->paused, want);
+    VT3_CINFO("audio", "output %s", paused ? "paused" : "resumed");
     vt3_diag_counter(paused ? "audio_pauses" : "audio_resumes", 1);
 }
 
 int vt3_audio_streaming(const vt3_audio *a)
 {
-    return a && a->stream && !atomic_load(&a->lost);
+    /* The stream pointer itself is not read here: it is set and cleared on the platform thread,
+     * while this is called from the mixer thread. */
+    return a && atomic_load(&a->have_stream) && !atomic_load(&a->lost);
 }
 
 int vt3_audio_is_paused(const vt3_audio *a)
@@ -204,6 +228,7 @@ void vt3_audio_recover(void)
     vt3_diag_counter("audio_reopen_attempts", 1);
     atomic_store(&a->lost, 0);
     if (a->stream) {
+        atomic_store(&a->have_stream, 0);
         AAudioStream_requestStop(a->stream);
         AAudioStream_close(a->stream);
         a->stream = NULL;
@@ -229,6 +254,13 @@ void vt3_audio_recover(void)
               fails, stale);
 }
 
+/* The output ring's level in milliseconds, for the diagnostics snapshot. */
+static uint32_t rb_ms(const vt3_audio *a, size_t bytes)
+{
+    size_t per_ms = (size_t)a->fmt.sample_rate * a->frame_bytes / 1000u;
+    return per_ms ? (uint32_t)(bytes / per_ms) : 0;
+}
+
 int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
 {
     if (!a || !out) return 0;
@@ -241,6 +273,9 @@ int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out)
     out->underruns = atomic_load(&a->underruns);
     out->starved = atomic_load(&a->starved);
     out->reopen_failures = atomic_load(&a->reopen_failures);
+    out->ring_ms = rb_ms(a, vt3_rb_capacity(a->rb));
+    out->ring_used_ms = rb_ms(a, vt3_rb_used(a->rb));
+    out->ring_peak_ms = rb_ms(a, vt3_rb_peak(a->rb));
     return 1;
 }
 
@@ -252,6 +287,7 @@ void vt3_audio_close(vt3_audio *a)
         vt3_diag_bind_audio(NULL);
     }
     if (a->stream) {
+        atomic_store(&a->have_stream, 0);
         AAudioStream_requestStop(a->stream);
         AAudioStream_close(a->stream);
     }

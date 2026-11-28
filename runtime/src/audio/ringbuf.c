@@ -14,6 +14,7 @@ struct vt3_ringbuf {
     size_t cap;
     _Atomic size_t head;   /* bytes ever written */
     _Atomic size_t tail;   /* bytes ever read */
+    _Atomic size_t peak;   /* highest occupancy since the last reset: how close an overrun came */
 };
 
 static size_t min_sz(size_t a, size_t b) { return a < b ? a : b; }
@@ -31,6 +32,7 @@ vt3_ringbuf *vt3_rb_create(size_t capacity)
     rb->cap = capacity;
     atomic_init(&rb->head, 0);
     atomic_init(&rb->tail, 0);
+    atomic_init(&rb->peak, 0);
     return rb;
 }
 
@@ -58,6 +60,13 @@ size_t vt3_rb_capacity(const vt3_ringbuf *rb)
     return rb->cap;
 }
 
+/* Peak occupancy since the last reset. Only the writer raises it, so a relaxed load and store are
+ * enough; the reader may see a slightly older value, which is all a diagnostic needs. */
+size_t vt3_rb_peak(const vt3_ringbuf *rb)
+{
+    return rb ? atomic_load_explicit(&rb->peak, memory_order_relaxed) : 0;
+}
+
 void vt3_rb_reset(vt3_ringbuf *rb)
 {
     if (!rb) return;
@@ -65,6 +74,7 @@ void vt3_rb_reset(vt3_ringbuf *rb)
      * byte. The counters keep counting up, so wrap arithmetic is unchanged. */
     size_t h = atomic_load_explicit(&rb->head, memory_order_relaxed);
     atomic_store_explicit(&rb->tail, h, memory_order_release);
+    atomic_store_explicit(&rb->peak, 0, memory_order_relaxed);
 }
 
 size_t vt3_rb_write(vt3_ringbuf *rb, const void *src, size_t n)
@@ -80,6 +90,9 @@ size_t vt3_rb_write(vt3_ringbuf *rb, const void *src, size_t n)
     memcpy(rb->buf, (const uint8_t *)src + first, n_ok - first);
 
     atomic_store_explicit(&rb->head, h + n_ok, memory_order_release);
+    size_t used = (h + n_ok) - t;
+    if (used > atomic_load_explicit(&rb->peak, memory_order_relaxed))
+        atomic_store_explicit(&rb->peak, used, memory_order_relaxed);
     return n_ok;
 }
 

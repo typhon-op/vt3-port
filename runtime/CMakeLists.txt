@@ -56,6 +56,7 @@ set(VT3_CORE_COMMON
     src/render/renderer.c
     src/render/builtin_glsl.c
     src/audio/ringbuf.c
+    src/audio/mix_core.c
     src/audio/adx.c
     src/input/input.c
     src/ui/touch_controls.c

@@ -20,6 +20,9 @@ size_t       vt3_rb_read(vt3_ringbuf *rb, void *dst, size_t n);         /* bytes
 size_t       vt3_rb_used(const vt3_ringbuf *rb);
 size_t       vt3_rb_space(const vt3_ringbuf *rb);
 size_t       vt3_rb_capacity(const vt3_ringbuf *rb);
+/* Highest occupancy since the ring was created or last reset: how close the output came to an
+ * overrun. A diagnostic; it never changes what is written or read. */
+size_t       vt3_rb_peak(const vt3_ringbuf *rb);
 /* Drops everything queued. Only the producer may call it, and only while no consumer is
  * running (the Android recovery path calls it with the old stream closed). */
 void         vt3_rb_reset(vt3_ringbuf *rb);
@@ -54,6 +57,12 @@ typedef struct vt3_audio_info {
     uint32_t underruns;
     uint32_t starved;
     uint32_t reopen_failures;     /* consecutive failed reopen attempts */
+    /* Occupancy of the output ring: capacity, level when sampled, and the highest level since the
+     * stream opened. Together with underruns/starved this says whether a stutter came from an
+     * empty ring (the mixer fell behind) or a full one (the device did). */
+    uint32_t ring_ms;
+    uint32_t ring_used_ms;
+    uint32_t ring_peak_ms;
 } vt3_audio_info;
 int vt3_audio_info_get(const vt3_audio *a, vt3_audio_info *out);
 /* 1 while a device stream is open and running. With none (a failed open, or a disconnect being

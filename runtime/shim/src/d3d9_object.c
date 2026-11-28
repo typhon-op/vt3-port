@@ -211,6 +211,24 @@ GPTR d3d9_new_stub(uint32_t kind, GPTR parent)
     return d3d9_obj_new(kind, NULL, parent);
 }
 
+void d3d9_obj_forget_all(void)
+{
+    int freed = 0;
+    for (int i = 0; i < D3D9_MAX_HOST; i++) {
+        if (g_d3d9_host[i].kind == D3D9_KIND_NONE) continue;
+        GPTR obj = g_d3d9_host[i].guest;
+        if (obj) d3d9_obj_free(obj);              /* the normal path, including the shader forget */
+        if (g_d3d9_host[i].kind != D3D9_KIND_NONE) {
+            /* The guest freed the object's memory without releasing it: its kind no longer reads
+             * back, so d3d9_obj_free bailed out above. Drop the host data and the slot anyway. */
+            free_data(g_d3d9_host[i].kind, g_d3d9_host[i].data);
+            memset(&g_d3d9_host[i], 0, sizeof g_d3d9_host[i]);
+        }
+        freed++;
+    }
+    if (freed) VT3_CINFO("app", "released %d host object(s) left behind by the match", freed);
+}
+
 void d3d9_obj_free(GPTR obj)
 {
     int i = host_index_of(obj, d3d9_rd(obj, D3D9_OFF_KIND));
