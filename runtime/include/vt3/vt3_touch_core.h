@@ -120,6 +120,14 @@ void vt3_touch_map_point(float dx, float dy, vt3_touch_rect dst, int logical_w, 
  * renderer has no second copy to drift from. */
 uint32_t vt3_touch_button_mask(int ctl);
 
+/* How far past a drawn shape a touch still counts as hitting it: a multiple of the radius for the
+ * stick and the face buttons, pixels (at scale 1) around a pill. The match hit test and the
+ * menu-mode layout both use these, so nothing can be drawn that cannot be tapped. */
+#define VT3_TOUCH_PICK_STICK  1.9f
+#define VT3_TOUCH_PICK_BUTTON 1.35f
+#define VT3_TOUCH_PICK_PILL   14.0f
+#define VT3_TOUCH_PICK_MENU   12.0f
+
 /* ---- touch ownership ------------------------------------------------------- */
 
 /* Picks which control a new touch belongs to. candidates[i] is a control index or -1; dist[i] its

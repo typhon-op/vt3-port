@@ -23,6 +23,7 @@
 #include "vt3/vt3_touch.h"
 #include "vt3/vt3_touch_config.h"
 #include "vt3/vt3_touch_core.h"
+#include "vt3/vt3_touch_menu_layout.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -379,46 +380,30 @@ static const vt3_touch_ctl_cfg *ctl_cfg(int ctl) { return vt3_touch_cfg_ctl(&g.c
  */
 static void menu_layout(void)
 {
-    float W = (float)g.logical_w, H = (float)g.logical_h;
-    float s = H / 1080.0f * g.user_scale;
+    float s = (float)g.logical_h / 1080.0f * g.user_scale;
     g.s = s;
 
     for (int i = 0; i < VT3_TC_COUNT; i++) {
         const vt3_touch_ctl_cfg *c = ctl_cfg(i);
         memset(&g.geo[i], 0, sizeof g.geo[i]);
         g.present[i] = 0;
-        /* Size and position are the menu's own; only the user's opacity still applies. */
+        /* Size and position are the menu pad's; only the user's opacity still applies. */
         g.opacity[i] = c ? c->opacity : 1.0f;
     }
 
-    /* The stick becomes the cross, in the corner where the thumb already rests. */
-    ctl_geom *q = &g.geo[VT3_TC_STICK];
-    q->r = 138.0f * s;
-    q->cx = 240.0f * s;
-    q->cy = H - 260.0f * s;
-    g.present[VT3_TC_STICK] = 1;
-
-    /* A and B side by side, no diamond and no X/Y: confirm and cancel are all a menu needs. */
-    float acx = W - 220.0f * s, acy = H - 270.0f * s;
-    q = &g.geo[VT3_TC_A];
-    q->r = 72.0f * s;
-    q->cx = acx;
-    q->cy = acy;
-    q = &g.geo[VT3_TC_B];
-    q->r = 72.0f * s;
-    q->cx = acx - 180.0f * s;
-    q->cy = acy;
-    g.present[VT3_TC_A] = g.present[VT3_TC_B] = 1;
-
-    /* The port's own menu pill stays: a touch-only player would otherwise have no way back to the
-     * quick menu from inside a game menu. It goes in the top strip, where a centred list does not
-     * reach and where the same pill already sits during a match, so it is where the thumb looks. */
-    q = &g.geo[VT3_TC_MENU];
-    q->w = 130.0f * s;
-    q->h = 54.0f * s;
-    q->cx = W * 0.5f;
-    q->cy = 30.0f * s + q->h * 0.5f;
-    g.present[VT3_TC_MENU] = 1;
+    /* The numbers come from vt3_touch_menu_layout, which is also what a tap is hit-tested against,
+     * so the cross, A/B and the MENU pill cannot drift from the shapes that are drawn. */
+    vt3_tml_ctl m[VT3_TML_ENTRIES];
+    vt3_touch_menu_layout((float)g.logical_w, (float)g.logical_h, s, m);
+    for (int i = 0; i < VT3_TML_ENTRIES; i++) {
+        ctl_geom *q = &g.geo[m[i].ctl];
+        q->cx = m[i].cx;
+        q->cy = m[i].cy;
+        q->r = m[i].r;
+        q->w = m[i].w;
+        q->h = m[i].h;
+        g.present[m[i].ctl] = 1;
+    }
 
     /* Everything else is absent: no X/Y, no shoulders, no Select/Start pills, no swipe pad. */
 }
@@ -506,6 +491,19 @@ static int candidates_at(float x, float y, int *cand, float *dist)
     int n = 0;
     const vt3_stick_cfg *prof = vt3_touch_cfg_profile(&g.cfg);
 
+    if (g.menu_pad) {
+        /* Menu mode is one small layout with its own tested hit test; nothing else on screen can
+         * claim a touch there. */
+        vt3_tml_ctl m[VT3_TML_ENTRIES];
+        vt3_touch_menu_layout((float)g.logical_w, (float)g.logical_h, g.s, m);
+        int hit = vt3_touch_menu_hit(m, VT3_TML_ENTRIES, x, y, g.s);
+        if (hit < 0) return 0;
+        float dx = x - m[hit].cx, dy = y - m[hit].cy;
+        cand[0] = m[hit].ctl;
+        dist[0] = sqrtf(dx * dx + dy * dy);
+        return 1;
+    }
+
     /* The stick: a circle, or the floating profile's zone (the lower left of the screen). */
     if (g.present[VT3_TC_STICK]) {
         ctl_geom *q = &g.geo[VT3_TC_STICK];
@@ -515,7 +513,7 @@ static int candidates_at(float x, float y, int *cand, float *dist)
                 dist[n++] = 0.0f;
             }
         } else {
-            float rr = q->r * 1.9f;
+            float rr = q->r * VT3_TOUCH_PICK_STICK;
             float dx = x - q->cx, dy = y - q->cy;
             float d = sqrtf(dx * dx + dy * dy);
             if (d <= rr) { cand[n] = VT3_TC_STICK; dist[n++] = d; }
@@ -524,7 +522,7 @@ static int candidates_at(float x, float y, int *cand, float *dist)
     for (int i = VT3_TC_A; i <= VT3_TC_Y; i++) {
         if (!g.present[i]) continue;
         ctl_geom *q = &g.geo[i];
-        float rr = q->r * 1.35f;
+        float rr = q->r * VT3_TOUCH_PICK_BUTTON;
         float dx = x - q->cx, dy = y - q->cy;
         float d = sqrtf(dx * dx + dy * dy);
         if (d <= rr) { cand[n] = i; dist[n++] = d; }
@@ -532,7 +530,7 @@ static int candidates_at(float x, float y, int *cand, float *dist)
     for (int i = VT3_TC_LB; i <= VT3_TC_START; i++) {
         if (!g.present[i]) continue;
         ctl_geom *q = &g.geo[i];
-        float pad = 14.0f * g.s;
+        float pad = VT3_TOUCH_PICK_PILL * g.s;
         if (in_rect(x, y, q->cx - q->w * 0.5f, q->cy - q->h * 0.5f, q->w, q->h, pad)) {
             float dx = x - q->cx, dy = y - q->cy;
             cand[n] = i;
@@ -541,7 +539,7 @@ static int candidates_at(float x, float y, int *cand, float *dist)
     }
     if (g.present[VT3_TC_MENU]) {
         ctl_geom *q = &g.geo[VT3_TC_MENU];
-        float pad = 12.0f * g.s;
+        float pad = VT3_TOUCH_PICK_MENU * g.s;
         if (in_rect(x, y, q->cx - q->w * 0.5f, q->cy - q->h * 0.5f, q->w, q->h, pad)) {
             float dx = x - q->cx, dy = y - q->cy;
             cand[n] = VT3_TC_MENU;

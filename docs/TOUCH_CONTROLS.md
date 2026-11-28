@@ -64,6 +64,10 @@ and stay hidden. `VT3_TOUCH_FORCE=1` overrides this and always shows the control
   Geometry is emitted as translucent triangles through the renderer's fixed-function (XYZRHW) path
   (`vt3_gfx_draw(..., tex = 0)`), which both the Vulkan and OpenGL backends implement, so it looks
   the same on both and scales with the frame. There is one draw call per frame.
+* The menu-mode pad's geometry and hit test live apart, in `runtime/src/ui/touch_menu_layout.c`
+  (`vt3/vt3_touch_menu_layout.h`): the overlay draws those numbers and hit-tests those numbers, so
+  the cross, A/B and the MENU pill cannot drift from what is tappable. The pick tolerances
+  (`VT3_TOUCH_PICK_*` in `vt3_touch_core.h`) are shared with the match hit test.
 * Labels are drawn from the public-domain 8x8 bitmap font in `runtime/src/ui/font8x8.h`
   (generated; see the file header for the source and licence).
 * `d3d9_gpu_present()` calls `vt3_touch_frame()` after the game's frame and before present, so the
@@ -96,3 +100,18 @@ On a device these go in `vt3.env` beside the game data
 On a desktop build, `VT3_TOUCH=1` draws the controls (there is no touch input, so it is only a
 layout check). On Android, `adb shell input tap X Y` / `input swipe X0 Y0 X1 Y1 DURATION` injects
 touch through the real input stack and drives the controls.
+
+Everything that can be decided without a screen has a host test:
+
+```
+cc -O1 -o /tmp/touchtest tools/touchtest/TouchHostTest.c \
+   runtime/src/ui/touch_core.c runtime/src/ui/touch_config.c -Iruntime/include -lm
+cc -O1 -o /tmp/touchmenutest tools/touchtest/TouchMenuHostTest.c \
+   runtime/src/ui/touch_menu_layout.c -Iruntime/include -lm
+```
+
+The first holds the stick transform, the mode switch, the repeat timing, gestures, the button map
+and the saved-config parsing to their arithmetic. The second covers the menu-mode pad: for every
+frame size and size setting the port runs at, the cross, A/B and the MENU pill stay inside the
+frame, do not overlap, the cross's and pill's pick zones reach nothing else, and every drawn control
+can be hit -- at its centre, inside its shape, and on each of the cross's four arms.
