@@ -28,6 +28,8 @@ mostly inert on them while covering the list the player is reading. So while the
 them — the draw profile says "menu", or the port's own quick menu is up — the overlay switches to:
 
 ```
+                   [MENU]
+
    ( cross )                                       [B]  [A]
 ```
 
@@ -36,8 +38,10 @@ them — the draw profile says "menu", or the port's own quick menu is up — th
   press-and-release, which is what a menu needs to see), and holding it repeats (400 ms, then every
   120 ms). The arm lights while its direction is held, including for a tap's pulse.
 * **A / B** (lower-right) — confirm and cancel, side by side, no X/Y diamond.
-* Nothing else is drawn or hit-tested: no shoulders, no SELECT/START pills, no swipe pad. The MENU
-  pill is absent on purpose, so it cannot sit over the game's own menu.
+* **MENU** (top centre) — kept, so a touch-only player can still open the port's quick menu from
+  inside a game menu. It sits in the top strip, above a centred list, in the same place the pill
+  occupies during a match.
+* Nothing else is drawn or hit-tested: no shoulders, no SELECT/START pills, no swipe pad.
 
 The switch follows the d-pad mode itself (`vt3_mode_update`, 140 ms dwell) rather than the raw menu
 signal, so the picture changes exactly when the input starts stepping. In menu mode the stick's

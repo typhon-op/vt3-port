@@ -410,8 +410,17 @@ static void menu_layout(void)
     q->cy = acy;
     g.present[VT3_TC_A] = g.present[VT3_TC_B] = 1;
 
-    /* Everything else is absent: no X/Y, no shoulders, no Select/Start pills, no swipe pad, and no
-     * MENU pill -- that one would sit over the top of the game's own menu it is meant to show. */
+    /* The port's own menu pill stays: a touch-only player would otherwise have no way back to the
+     * quick menu from inside a game menu. It goes in the top strip, where a centred list does not
+     * reach and where the same pill already sits during a match, so it is where the thumb looks. */
+    q = &g.geo[VT3_TC_MENU];
+    q->w = 130.0f * s;
+    q->h = 54.0f * s;
+    q->cx = W * 0.5f;
+    q->cy = 30.0f * s + q->h * 0.5f;
+    g.present[VT3_TC_MENU] = 1;
+
+    /* Everything else is absent: no X/Y, no shoulders, no Select/Start pills, no swipe pad. */
 }
 
 static void layout(void)
