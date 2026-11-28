@@ -32,6 +32,14 @@ int vt3_menu_handle(int drawable_w, int drawable_h);
 /* True while the quick menu is on screen. */
 int vt3_menu_open(void);
 
+/*
+ * A tap on the quick menu, in drawable (window) pixels, from the platform thread. The row under the
+ * point is selected and run at once, exactly as the pad's A runs the selected row; a point that
+ * misses the rows does nothing. Ignored while the menu is closed. Picked up by the menu's own
+ * thread on its next pass, so the row's action never runs on the input thread.
+ */
+void vt3_menu_tap(float x, float y);
+
 /* Opens or closes the quick menu from outside (used by the overlay and by tests). */
 void vt3_menu_set_open(int open);
 

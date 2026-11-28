@@ -17,7 +17,9 @@
  * quads and cannot fail to load an asset at runtime.
  */
 #include "vt3/vt3_menu.h"
+#include "vt3/vt3_menu_layout.h"
 #include "vt3/vt3_thermal.h"
+#include "vt3/vt3_touch_core.h"
 
 #include "vt3/vt3_diag.h"
 #include "vt3/vt3_input.h"
@@ -32,13 +34,13 @@ void vt3_platform_request_main_menu(void);
 #include "font8x8.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #define MAX_VERTS 4096
-#define ROW_H 40.0f
 #define TEXT 2.0f
 
 /* The VT3 palette, as the renderer wants it: 0xAARRGGBB. */
@@ -326,7 +328,10 @@ void vt3_menu_overlay(int drawable_w, int drawable_h)
 /* ---- quick menu ---------------------------------------------------------------------- */
 
 static const char *rows[] = { "Resume", "Touchscreen controls", "On-screen controls", "Controls guide", "Settings", "Exit to main menu" };
-#define ROWS ((int)(sizeof rows / sizeof rows[0]))
+#define ROWS VT3_MENU_ROWS
+/* The labels, the actions and the layout are indexed by the same number: a row added on one side
+ * without the other must not compile. */
+_Static_assert(sizeof rows / sizeof rows[0] == VT3_MENU_ROWS, "rows and vt3_menu_layout disagree");
 
 static int touch_on(void)
 {
@@ -342,6 +347,80 @@ static void toggle_touch(void)
     write_flag("touch", on);
     vt3_touch_reload();
     VT3_CINFO("menu", "on-screen controls %s", on ? "on" : "off");
+}
+
+/*
+ * Runs a row's action. The pad's A/Start and a tap on the row both come through here, so the two
+ * paths cannot drift: what a row does is written once. Row 5 does not return (it leaves the match
+ * for the Android main menu).
+ */
+static void activate_row(int row)
+{
+    switch (row) {
+        case 0:
+            g.open = 0;
+            break;
+        case 1:
+            vt3_touch_release_all();
+            VT3_CINFO("menu", "opening the touchscreen controls (match stays paused)");
+            g.wait_screen = 1;
+            vt3_android_open_touch_settings();
+            break;
+        case 2:
+            toggle_touch();
+            break;
+        case 3:
+            g.guide = 1;
+            break;
+        case 4:
+            vt3_touch_release_all();
+            VT3_CINFO("menu", "opening the settings screen (match stays paused)");
+            g.wait_screen = 1;
+            vt3_android_open_settings();
+            break;
+        case 5:
+            vt3_touch_release_all();
+            VT3_CINFO("menu", "exit to main menu");
+            vt3_platform_request_main_menu();   /* does not return */
+            break;
+        default:
+            break;
+    }
+}
+
+/* ---- taps on the rows ---------------------------------------------------------------- */
+
+/* A tap arrives on the platform thread; the menu is owned by the thread that drew it, so the tap is
+ * left in one slot and picked up on that thread's next pass, the same way the pad state is. One
+ * slot is enough: a pass can only run one row, and the panel is the only window it draws. */
+static _Atomic int g_tap_pending;
+static _Atomic float g_tap_x, g_tap_y;
+
+void vt3_menu_tap(float x, float y)
+{
+    if (!g.open) return;                     /* nothing on screen to tap */
+    atomic_store_explicit(&g_tap_x, x, memory_order_relaxed);
+    atomic_store_explicit(&g_tap_y, y, memory_order_relaxed);
+    atomic_store_explicit(&g_tap_pending, 1, memory_order_release);
+}
+
+/* The row a queued tap picked, or -1 when there was no tap or it missed the rows. The point is
+ * mapped into logical pixels through the same letterbox the frame is presented in, which is what
+ * makes a tap land on the bar it visibly hit. */
+static int take_tap(int drawable_w, int drawable_h)
+{
+    if (!atomic_exchange_explicit(&g_tap_pending, 0, memory_order_acquire)) return -1;
+    float dx = atomic_load_explicit(&g_tap_x, memory_order_relaxed);
+    float dy = atomic_load_explicit(&g_tap_y, memory_order_relaxed);
+    int lw = 0, lh = 0;
+    vt3_gfx_logical_size(&lw, &lh);
+    if (lw <= 0 || lh <= 0) return -1;
+    vt3_rect dst;
+    vt3_gfx_view_rect(drawable_w, drawable_h, &dst);
+    vt3_touch_rect view = { (float)dst.x, (float)dst.y, (float)dst.w, (float)dst.h };
+    float lx = 0.0f, ly = 0.0f;
+    vt3_touch_map_point(dx, dy, view, lw, lh, &lx, &ly);
+    return vt3_menu_row_at(lx, ly, (float)lw, (float)lh);
 }
 
 static void draw_guide(int lw, int lh)
@@ -375,11 +454,10 @@ static void draw_menu(int lw, int lh)
      * the VT3 pause screen dims the match behind it in exactly this way. */
     quad(0, 0, (float)lw, (float)lh, C_DIM);
 
-    float w = lw * 0.56f;
-    if (w < 320) w = 320;
-    if (w > 560) w = 560;
-    float h = 66 + ROWS * (ROW_H + 6) + 34;
-    float x = (lw - w) * 0.5f, y = (lh - h) * 0.5f;
+    /* The plate and the rows come from the layout module, which is also what a tap is hit-tested
+     * against (vt3_menu_row_at), so the two cannot disagree. */
+    float x, y, w, h;
+    vt3_menu_panel((float)lw, (float)lh, &x, &y, &w, &h);
 
     /* Drop shadow, then the translucent silver panel with its orange top rule. */
     quad(x + 6, y + 8, x + w + 6, y + h + 8, C_SHADOW);
@@ -391,30 +469,30 @@ static void draw_menu(int lw, int lh)
     text_center("VIRTUA TENNIS 3", lw * 0.5f, y + 44, 1.2f, C_INK_SOFT);
 
     for (int i = 0; i < ROWS; i++) {
-        float ry = y + 66 + i * (ROW_H + 6);
+        vt3_menu_row r = vt3_menu_row_rect((float)lw, (float)lh, i);
+        float rx = r.x, ry = r.y, rw = r.w, rh = r.h;
         int on = i == g.sel;
         if (on) {
-            quad(x + 16, ry, x + w - 16, ry + ROW_H, C_ORANGE);
-            quad(x + 16, ry, x + w - 16, ry + 3, C_ORANGE_HI);
-            quad(x + 16, ry + ROW_H - 3, x + w - 16, ry + ROW_H, C_ORANGE_LO);
-            /* The navigation arrows either side of the selected row. */
-            tri(x + 8, ry + ROW_H * 0.5f - 7, x + 8, ry + ROW_H * 0.5f + 7,
-                x + 16, ry + ROW_H * 0.5f, C_ORANGE);
-            tri(x + w - 8, ry + ROW_H * 0.5f - 7, x + w - 8, ry + ROW_H * 0.5f + 7,
-                x + w - 16, ry + ROW_H * 0.5f, C_ORANGE);
+            quad(rx, ry, rx + rw, ry + rh, C_ORANGE);
+            quad(rx, ry, rx + rw, ry + 3, C_ORANGE_HI);
+            quad(rx, ry + rh - 3, rx + rw, ry + rh, C_ORANGE_LO);
+            /* The navigation arrows either side of the selected row, in the plate's margin. */
+            tri(rx - 8, ry + rh * 0.5f - 7, rx - 8, ry + rh * 0.5f + 7, rx, ry + rh * 0.5f, C_ORANGE);
+            tri(rx + rw + 8, ry + rh * 0.5f - 7, rx + rw + 8, ry + rh * 0.5f + 7, rx + rw,
+                ry + rh * 0.5f, C_ORANGE);
         } else {
-            quad(x + 16, ry, x + w - 16, ry + ROW_H, C_SILVER);
+            quad(rx, ry, rx + rw, ry + rh, C_SILVER);
         }
         char label[96];
         if (i == 1)
             snprintf(label, sizeof label, "%s: %s", rows[i], touch_on() ? "On" : "Off");
         else
             snprintf(label, sizeof label, "%s", rows[i]);
-        text(label, x + 30, ry + (ROW_H - 8 * TEXT) * 0.5f, TEXT, on ? C_WHITE : C_INK);
+        text(label, rx + 14, ry + (rh - 8 * TEXT) * 0.5f, TEXT, on ? C_WHITE : C_INK);
         if (i == 1) {
-            float bx = x + w - 90;
-            quad(bx, ry + 12, bx + 60, ry + ROW_H - 12, on ? C_WHITE : C_INK);
-            quad(bx + 2, ry + 14, bx + 58, ry + ROW_H - 14,
+            float bx = rx + rw - 74;
+            quad(bx, ry + 12, bx + 60, ry + rh - 12, on ? C_WHITE : C_INK);
+            quad(bx + 2, ry + 14, bx + 58, ry + rh - 14,
                  touch_on() ? (on ? C_ORANGE : C_ORANGE) : (on ? C_ORANGE_LO : C_SILVER));
         }
     }
@@ -482,6 +560,22 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
         uint32_t fresh = merged & ~g.prev_buttons;
         g.prev_buttons = merged;
 
+        /* A tap on a row selects and runs it directly, which is the whole point of the panel being
+         * tappable. It then counts as this pass's input, so a finger that lands on a row cannot
+         * also be read as a pad press in the same pass. */
+        int tapped = take_tap(drawable_w, drawable_h);
+        if (tapped >= 0) {
+            if (g.guide) {
+                g.guide = 0;              /* anywhere on the guide page returns to the rows */
+            } else {
+                g.sel = tapped;
+                vt3_diag_counter("quick_menu_taps", 1);
+                VT3_CINFO("menu", "row %d tapped: %s", tapped, rows[tapped]);
+                activate_row(tapped);
+            }
+            fresh = 0;
+        }
+
         if (fresh & VT3_BTN_B) {
             g.open = 0;
             g.guide = 0;
@@ -502,40 +596,8 @@ int vt3_menu_handle(int drawable_w, int drawable_h)
             }
         }
         if (fresh & (VT3_BTN_A | VT3_BTN_START)) {
-            if (g.guide) {
-                g.guide = 0;
-            } else {
-                switch (g.sel) {
-                    case 0:
-                        g.open = 0;
-                        break;
-                    case 1:
-                        vt3_touch_release_all();
-                        VT3_CINFO("menu", "opening the touchscreen controls (match stays paused)");
-                        g.wait_screen = 1;
-                        vt3_android_open_touch_settings();
-                        break;
-                    case 2:
-                        toggle_touch();
-                        break;
-                    case 3:
-                        g.guide = 1;
-                        break;
-                    case 4:
-                        vt3_touch_release_all();
-                        VT3_CINFO("menu", "opening the settings screen (match stays paused)");
-                        g.wait_screen = 1;
-                        vt3_android_open_settings();
-                        break;
-                    case 5:
-                        vt3_touch_release_all();
-                        VT3_CINFO("menu", "exit to main menu");
-                        vt3_platform_request_main_menu();   /* does not return */
-                        break;
-                    default:
-                        break;
-                }
-            }
+            if (g.guide) g.guide = 0;
+            else activate_row(g.sel);          /* the same call a tap makes */
         }
 
         struct timespec ts = { 0, 16000000 };
@@ -555,6 +617,8 @@ int vt3_menu_open(void)
 void vt3_menu_set_open(int open)
 {
     g.open = open ? 1 : 0;
+    /* A tap that arrived before the panel was up is not meant for it. */
+    atomic_store_explicit(&g_tap_pending, 0, memory_order_release);
     if (g.open) {
         g.sel = 0;
         g.guide = 0;
@@ -567,6 +631,7 @@ void vt3_menu_set_open(int open)
 void vt3_menu_reset(void)
 {
     memset(&g, 0, sizeof g);
+    atomic_store_explicit(&g_tap_pending, 0, memory_order_release);
 }
 
 void vt3_menu_init(void)

@@ -5,6 +5,7 @@
  */
 #include "vt3/vt3_input.h"
 #include "vt3/vt3_log.h"
+#include "vt3/vt3_menu.h"
 #include "vt3/vt3_touch.h"
 
 #include <android/input.h>
@@ -184,6 +185,20 @@ static void motion_event(const AInputEvent *e)
     vt3_input_set_axis(VT3_AXIS_RT, rt);
 }
 
+/* Touch while the port's quick menu is up. The panel is the only thing on screen then (the
+ * on-screen controls are not drawn over it), so every tap is the menu's: presses are handed to it
+ * by position and nothing reaches the pad underneath. */
+static int menu_touch(const AInputEvent *e)
+{
+    int32_t masked = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK;
+    if (masked != AMOTION_EVENT_ACTION_DOWN && masked != AMOTION_EVENT_ACTION_POINTER_DOWN)
+        return 1;                     /* moves and lifts: a row is chosen on the press */
+    size_t n = AMotionEvent_getPointerCount(e);
+    for (size_t i = 0; i < n; i++)
+        vt3_menu_tap(AMotionEvent_getX(e, i), AMotionEvent_getY(e, i));
+    return 1;
+}
+
 /* Touch on the on-screen controls. Returns 1 when the controls are up (and so claim the event),
  * even for a touch that misses them. */
 static int touch_event(const AInputEvent *e)
@@ -239,6 +254,7 @@ int vt3_input_android_event(const AInputEvent *e)
             motion_event(e);
             return 1;
         }
+        if (vt3_menu_open()) return menu_touch(e);
         return touch_event(e);
     }
     return 0;

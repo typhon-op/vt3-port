@@ -64,6 +64,7 @@ set(VT3_CORE_COMMON
     src/ui/touch_core.c
     src/ui/touch_config.c
     src/ui/game_menu.c
+    src/ui/menu_layout.c
 )
 if(VT3_ANDROID)
     set(VT3_CORE_PLATFORM
