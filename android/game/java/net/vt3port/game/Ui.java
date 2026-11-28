@@ -250,6 +250,24 @@ final class Ui {
     }
 
     /**
+     * An option list from the resources, in the order of the constants it labels: item i belongs to
+     * index i. A translation that does not list every item falls back to the built-in English list,
+     * because a short list would otherwise shift the value behind each label.
+     */
+    static String[] labels(Context c, int id, String[] fallback) {
+        String[] list;
+        try {
+            list = c.getResources().getStringArray(id);
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+        if (list.length == fallback.length) return list;
+        DiagLog.w("ui", "option list " + id + " has " + list.length + " items, expected "
+                + fallback.length + "; using the English list");
+        return fallback;
+    }
+
+    /**
      * A value picker. A Spinner would be the obvious widget, but its dropdown is a platform dialog
      * that ignores the theme; a cycling button keeps the game's plate and works with a controller's
      * d-pad, which is what the settings screen is navigated with on a handheld.

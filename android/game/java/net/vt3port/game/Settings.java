@@ -153,7 +153,8 @@ public class Settings extends BaseActivity {
         String preset = Markers.read(root, "preset", "auto");
 
         content.addView(Ui.section(this, getString(R.string.settings_quality)));
-        Ui.Choice pre = new Ui.Choice(this, GraphicsProfile.PRESET_LABELS,
+        Ui.Choice pre = new Ui.Choice(this,
+                Ui.labels(this, R.array.preset_labels, GraphicsProfile.PRESET_LABELS),
                 presetIndex(preset), () -> {});
         pre.setOnClickListener(v -> {
             pre.step(1);
@@ -164,7 +165,8 @@ public class Settings extends BaseActivity {
 
         content.addView(Ui.section(this, getString(R.string.settings_display)));
 
-        Ui.Choice res = new Ui.Choice(this, GraphicsProfile.RES_LABEL,
+        Ui.Choice res = new Ui.Choice(this,
+                Ui.labels(this, R.array.res_labels, GraphicsProfile.RES_LABEL),
                 indexOf(GraphicsProfile.RES, Markers.readInt(root, "override_res", null)), () -> {});
         res.setOnClickListener(v -> {
             res.step(1);
@@ -178,7 +180,8 @@ public class Settings extends BaseActivity {
                 getString(R.string.settings_scale_hint), 60, 100, 5, scale, " %",
                 v -> setOverride("override_scale", v)));
 
-        Ui.Choice aniso = new Ui.Choice(this, GraphicsProfile.ANISO_LABEL,
+        Ui.Choice aniso = new Ui.Choice(this,
+                Ui.labels(this, R.array.aniso_labels, GraphicsProfile.ANISO_LABEL),
                 indexOf(GraphicsProfile.ANISO, Markers.readInt(root, "override_aniso", null)), () -> {});
         aniso.setOnClickListener(v -> {
             aniso.step(1);
@@ -198,7 +201,8 @@ public class Settings extends BaseActivity {
                 on -> { Markers.writeFlag(root, "override_shadows", on); custom(); }));
 
         content.addView(Ui.section(this, getString(R.string.settings_frames)));
-        Ui.Choice fps = new Ui.Choice(this, GraphicsProfile.FPS_LABEL,
+        Ui.Choice fps = new Ui.Choice(this,
+                Ui.labels(this, R.array.fps_labels, GraphicsProfile.FPS_LABEL),
                 indexOf(GraphicsProfile.FPS, Markers.readInt(root, "override_fps", null)), () -> {});
         fps.setOnClickListener(v -> {
             fps.step(1);
@@ -229,7 +233,8 @@ public class Settings extends BaseActivity {
 
         /* Where the overlay sits. The runtime reads overlay_pos once a second, so it moves without a
          * restart; the corners are the four places the touch controls never occupy. */
-        String[] corners = { "Top left", "Top right", "Bottom left", "Bottom right" };
+        String[] corners = Ui.labels(this, R.array.overlay_corner_labels,
+                new String[] { "Top left", "Top right", "Bottom left", "Bottom right" });
         final int[] corner = { Markers.intOr(root, "overlay_pos", 0) };
         if (corner[0] < 0 || corner[0] > 3) corner[0] = 0;
         Ui.Choice where = new Ui.Choice(this, corners, corner[0], () -> {});
@@ -249,7 +254,8 @@ public class Settings extends BaseActivity {
         content.addView(Ui.row(this, getString(R.string.settings_thermal_state),
                 getString(R.string.settings_device_hint),
                 Ui.value(this, (thermal < 0 ? getString(R.string.settings_unknown)
-                        : GraphicsProfile.thermalName(thermal)) + "  ·  "
+                        : Ui.labels(this, R.array.thermal_labels, GraphicsProfile.THERMAL_NAME)
+                                [GraphicsProfile.thermalIndex(thermal)]) + "  ·  "
                         + GraphicsProfile.TIER_NAME[deviceTier()])));
 
         content.addView(Ui.note(this, GraphicsProfile.describeDevice(this) + "\n"

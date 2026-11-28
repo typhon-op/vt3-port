@@ -116,7 +116,7 @@
     <string name="tab_driver">Adreno Tools</string>
     <string name="settings_quality">Qualité</string>
     <string name="settings_preset">Profil de qualité</string>
-    <string name="settings_preset_hint">Low, Medium et High sont des points de départ choisis pour cet appareil ; Auto suit l\'appareil ; Custom conserve vos propres réglages. Modifier une option ci-dessous passe le profil sur Custom.</string>
+    <string name="settings_preset_hint">Bas, Moyen et Élevé sont des points de départ choisis pour cet appareil ; Auto suit l\'appareil ; Personnalisé conserve vos propres réglages. Modifier une option ci-dessous passe le profil sur Personnalisé.</string>
     <string name="settings_display">Affichage</string>
     <string name="settings_resolution">Résolution de rendu</string>
     <string name="settings_resolution_hint">Native rend à la hauteur propre à l\'écran. Une hauteur plus faible coûte moins de temps GPU et de chaleur.</string>
@@ -264,4 +264,56 @@
     <string name="diagnostics_save_cancelled">Enregistrement annulé : aucun fichier n\'a été écrit.</string>
     <string name="diagnostics_saved">Rapport enregistré et vérifié : %1$d octets, lisible.</string>
     <string name="diagnostics_save_failed">Le rapport n\'a pas pu être enregistré : %1$s</string>
+
+    <!-- Option labels for the settings controls; the order follows the constants they name. -->
+    <string-array name="preset_labels">
+        <item>Auto (appareil)</item>
+        <item>Bas</item>
+        <item>Moyen</item>
+        <item>Élevé</item>
+        <item>Personnalisé</item>
+    </string-array>
+    <string-array name="fps_labels">
+        <item>Auto</item>
+        <item>30 i/s</item>
+        <item>35 i/s</item>
+        <item>40 i/s</item>
+        <item>45 i/s</item>
+        <item>50 i/s</item>
+        <item>55 i/s</item>
+        <item>60 i/s</item>
+        <item>Sans limite</item>
+    </string-array>
+    <string-array name="res_labels">
+        <item>Auto</item>
+        <item>Écran natif</item>
+        <item>1440p</item>
+        <item>1220p</item>
+        <item>1080p</item>
+        <item>900p</item>
+        <item>720p</item>
+        <item>540p</item>
+    </string-array>
+    <string-array name="aniso_labels">
+        <item>Auto</item>
+        <item>Désactivé (1x)</item>
+        <item>2x</item>
+        <item>4x</item>
+        <item>8x</item>
+        <item>16x</item>
+    </string-array>
+    <string-array name="overlay_corner_labels">
+        <item>En haut à gauche</item>
+        <item>En haut à droite</item>
+        <item>En bas à gauche</item>
+        <item>En bas à droite</item>
+    </string-array>
+    <string-array name="thermal_labels">
+        <item>froid</item>
+        <item>tiède</item>
+        <item>modéré</item>
+        <item>chaud</item>
+        <item>critique</item>
+        <item>urgence</item>
+    </string-array>
 </resources>

@@ -120,7 +120,7 @@
     <string name="tab_driver">أدوات Adreno</string>
     <string name="settings_quality">الجودة</string>
     <string name="settings_preset">إعداد الجودة</string>
-    <string name="settings_preset_hint">منخفض ومتوسط ومرتفع نقاط بداية مختارة لهذا الجهاز؛ تلقائي يتبع الجهاز؛ مخصص يحفظ إعداداتك. تغيير أي خيار أدناه يحوّل الإعداد إلى مخصص.</string>
+    <string name="settings_preset_hint">منخفض ومتوسط وعالٍ نقاط بداية مختارة لهذا الجهاز؛ تلقائي يتبع الجهاز؛ مخصص يحفظ إعداداتك. تغيير أي خيار أدناه يحوّل الإعداد إلى مخصص.</string>
     <string name="settings_display">العرض</string>
     <string name="settings_resolution">دقة العرض</string>
     <string name="settings_resolution_hint">الأصلي يعرض بارتفاع الشاشة نفسه. الارتفاع الأقل يعني وقت معالجة وحرارة أقل.</string>
@@ -270,4 +270,56 @@
     <string name="diagnostics_save_cancelled">أُلغي الحفظ: لم يُكتب أي ملف.</string>
     <string name="diagnostics_saved">حُفظ التقرير وتُحقّق منه: %1$d بايت، قابل للقراءة.</string>
     <string name="diagnostics_save_failed">تعذّر حفظ التقرير: %1$s</string>
+
+    <!-- تسميات قوائم الخيارات؛ الترتيب يتبع الثوابت التي تسمّيها. -->
+    <string-array name="preset_labels">
+        <item>تلقائي (الجهاز)</item>
+        <item>منخفض</item>
+        <item>متوسط</item>
+        <item>عالٍ</item>
+        <item>مخصص</item>
+    </string-array>
+    <string-array name="fps_labels">
+        <item>تلقائي</item>
+        <item>30 إطاراً/ث</item>
+        <item>35 إطاراً/ث</item>
+        <item>40 إطاراً/ث</item>
+        <item>45 إطاراً/ث</item>
+        <item>50 إطاراً/ث</item>
+        <item>55 إطاراً/ث</item>
+        <item>60 إطاراً/ث</item>
+        <item>بلا حد</item>
+    </string-array>
+    <string-array name="res_labels">
+        <item>تلقائي</item>
+        <item>شاشة الجهاز</item>
+        <item>1440p</item>
+        <item>1220p</item>
+        <item>1080p</item>
+        <item>900p</item>
+        <item>720p</item>
+        <item>540p</item>
+    </string-array>
+    <string-array name="aniso_labels">
+        <item>تلقائي</item>
+        <item>مطفأ (1x)</item>
+        <item>2x</item>
+        <item>4x</item>
+        <item>8x</item>
+        <item>16x</item>
+    </string-array>
+    <string-array name="overlay_corner_labels">
+        <item>أعلى اليسار</item>
+        <item>أعلى اليمين</item>
+        <item>أسفل اليسار</item>
+        <item>أسفل اليمين</item>
+    </string-array>
+    <string-array name="thermal_labels">
+        <item>بارد</item>
+        <item>دافئ</item>
+        <item>معتدل</item>
+        <item>حار</item>
+        <item>حرج</item>
+        <item>طارئ</item>
+    </string-array>
 </resources>

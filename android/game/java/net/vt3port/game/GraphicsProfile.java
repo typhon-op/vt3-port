@@ -243,15 +243,28 @@ public final class GraphicsProfile {
         return w + "x" + h + " @ " + Math.round(d.getRefreshRate()) + " Hz";
     }
 
-    public static String thermalName(int status) {
+    /**
+     * Thermal status names, in the order {@link #thermalIndex} returns. The settings screen shows
+     * the translated list; the log and the report use {@link #thermalName}, which stays English.
+     */
+    public static final String[] THERMAL_NAME = {
+            "cool", "warm", "moderate", "hot", "critical", "emergency"
+    };
+
+    /** Index into {@link #THERMAL_NAME} for a PowerManager thermal status. */
+    public static int thermalIndex(int status) {
         switch (status) {
-            case PowerManager.THERMAL_STATUS_NONE: return "cool";
-            case PowerManager.THERMAL_STATUS_LIGHT: return "warm";
-            case PowerManager.THERMAL_STATUS_MODERATE: return "moderate";
-            case PowerManager.THERMAL_STATUS_SEVERE: return "hot";
-            case PowerManager.THERMAL_STATUS_CRITICAL: return "critical";
-            default: return "emergency";
+            case PowerManager.THERMAL_STATUS_NONE: return 0;
+            case PowerManager.THERMAL_STATUS_LIGHT: return 1;
+            case PowerManager.THERMAL_STATUS_MODERATE: return 2;
+            case PowerManager.THERMAL_STATUS_SEVERE: return 3;
+            case PowerManager.THERMAL_STATUS_CRITICAL: return 4;
+            default: return 5;
         }
+    }
+
+    public static String thermalName(int status) {
+        return THERMAL_NAME[thermalIndex(status)];
     }
 
     /* ---- marker access, kept for the diagnostics report and the tests ---- */

@@ -243,6 +243,64 @@
     <string name="driver_saved">%1$s kept on this device.</string>
     <string name="driver_save_failed">Could not keep that package: %1$s</string>
 
+    <!--
+      Option labels for the settings controls. The order is the order of the constants they label
+      in GraphicsProfile: item i belongs to index i, and Ui.labels() refuses a list whose length
+      does not match, so a short translation cannot shift the value behind each label.
+    -->
+    <string-array name="preset_labels">
+        <item>Auto (device)</item>
+        <item>Low</item>
+        <item>Medium</item>
+        <item>High</item>
+        <item>Custom</item>
+    </string-array>
+    <string-array name="fps_labels">
+        <item>Auto</item>
+        <item>30 fps</item>
+        <item>35 fps</item>
+        <item>40 fps</item>
+        <item>45 fps</item>
+        <item>50 fps</item>
+        <item>55 fps</item>
+        <item>60 fps</item>
+        <item>Uncapped</item>
+    </string-array>
+    <string-array name="res_labels">
+        <item>Auto</item>
+        <item>Native panel</item>
+        <item>1440p</item>
+        <item>1220p</item>
+        <item>1080p</item>
+        <item>900p</item>
+        <item>720p</item>
+        <item>540p</item>
+    </string-array>
+    <string-array name="aniso_labels">
+        <item>Auto</item>
+        <item>Off (1x)</item>
+        <item>2x</item>
+        <item>4x</item>
+        <item>8x</item>
+        <item>16x</item>
+    </string-array>
+    <!-- The four overlay corners, in the order of the overlay_pos marker. -->
+    <string-array name="overlay_corner_labels">
+        <item>Top left</item>
+        <item>Top right</item>
+        <item>Bottom left</item>
+        <item>Bottom right</item>
+    </string-array>
+    <!-- Thermal status, in the order of GraphicsProfile.thermalIndex. -->
+    <string-array name="thermal_labels">
+        <item>cool</item>
+        <item>warm</item>
+        <item>moderate</item>
+        <item>hot</item>
+        <item>critical</item>
+        <item>emergency</item>
+    </string-array>
+
     <!-- The real mapping the DirectInput shim implements. -->
     <string-array name="controls_guide">
         <item>A / Cross &#8212; top spin (flat shot when held with the stick centred)</item>
