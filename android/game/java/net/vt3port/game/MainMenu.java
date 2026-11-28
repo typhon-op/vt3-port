@@ -36,6 +36,10 @@ public class MainMenu extends BaseActivity {
     /** The one action that ends the app on purpose: leaving a match never does this. */
     void quit() {
         DiagLog.i("app", "quit from the main menu");
+        /* Stop the thermal watch before the process goes. It is a started service, so killing the
+         * process under it would have the platform bring it back: the app disappeared from the
+         * screen but its process kept being restarted, with no UI to reach it. */
+        ThermalWatch.stop(this);
         finishAffinity();
         android.os.Process.killProcess(android.os.Process.myPid());
     }
@@ -66,6 +70,9 @@ public class MainMenu extends BaseActivity {
             return;
         }
         footer.setText(getString(R.string.menu_footer, Game.dataRoot(this).getAbsolutePath()));
+        /* The watch only feeds the in-game overlay: back in the menu there is nothing to sample, and
+         * a running service is what keeps this process alive after the screen is gone. */
+        ThermalWatch.stop(this);
     }
 
     View build() {
@@ -246,7 +253,10 @@ public class MainMenu extends BaseActivity {
 
     @Override
     public void onBackPressed() {
-        /* Back on the main menu leaves the app; it does not drop into setup. */
-        moveTaskToBack(true);
+        /* Back on the main menu ends the app, exactly like Quit. It used to move the task to the
+         * back, which on this task means it vanished: the menu is excludeFromRecents, so the app
+         * disappeared from the screen and from the recents list while its process (and the thermal
+         * service) kept running, with no way for the player to get back to it. */
+        quit();
     }
 }

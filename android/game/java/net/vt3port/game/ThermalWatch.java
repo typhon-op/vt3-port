@@ -59,6 +59,19 @@ public class ThermalWatch extends Service implements PowerManager.OnThermalStatu
         }
     }
 
+    /**
+     * Stops the watch. Only a running match reads these markers, and a started service left behind
+     * keeps the process alive (and restarted) after its task is gone: the app looks closed while it
+     * is still running. Called when a match ends and when the app is quit.
+     */
+    public static void stop(android.content.Context c) {
+        try {
+            c.stopService(new Intent(c, ThermalWatch.class));
+        } catch (Exception ignored) {
+            /* nothing to stop, or the service is not running */
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -72,7 +85,9 @@ public class ThermalWatch extends Service implements PowerManager.OnThermalStatu
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        /* Not sticky: the watch is only useful while a match runs, and a sticky service is restarted
+         * by the platform after the process goes, which resurrects the app behind a finished task. */
+        return START_NOT_STICKY;
     }
 
     @Override

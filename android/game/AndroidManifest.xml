@@ -54,7 +54,10 @@
             android:grantUriPermissions="true" />
         <!-- Writes the thermal status marker while the game runs; the runtime lowers anisotropy as
              the phone heats, and the next launch moves the resolution one rung. -->
-        <service android:name="net.vt3port.game.ThermalWatch" android:exported="false" />
+        <!-- stopWithTask: swiping the task away must take this with it, not leave the process
+             running behind a task that no longer exists. -->
+        <service android:name="net.vt3port.game.ThermalWatch" android:exported="false"
+            android:stopWithTask="true" />
         <!-- keyboard|navigation: connecting a pad or keyboard must not recreate the activity, which
              ends the game (APP_CMD_DESTROY) mid-match; the game takes the change as a resize. -->
         <activity android:name="android.app.NativeActivity"
