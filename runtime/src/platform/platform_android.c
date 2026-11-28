@@ -191,13 +191,18 @@ static void reset_runtime_for_relaunch(void)
     vt3_menu_reset();
     vt3_input_init();
     vt3_input_clear_keys();
-    /* In this order: the mixer stops before its buffers are released, the objects are released
-     * while the renderer can still free their GPU handles, and only then is the renderer shut
-     * down. Without the middle step every relaunch leaks a match's host objects, and after a few
-     * of them no new DirectSound or Direct3D object can be created at all. */
+    /* In this order: the mixer stops before its buffers are released, the renderer is shut down
+     * (which destroys every GPU texture it owns), and only then are the objects the guest left
+     * behind released. Without that release every relaunch leaks a match's host objects, and
+     * after a few of them no new DirectSound or Direct3D object can be created at all.
+     *
+     * The renderer goes down first on purpose: with it down, vt3_gfx_tex_destroy() has no backend
+     * (g_ops is NULL) and d3d9_gpu_tex_destroy() is gated on g_gpu_ok, so the object release frees
+     * host memory and nothing else. That is the teardown nobody has watched on a device, and this
+     * ordering keeps it away from live Vulkan/GL objects entirely. */
     vt3_dsound_shutdown();
-    d3d9_obj_forget_all();
     d3d9_gpu_shutdown();
+    d3d9_obj_forget_all();
     vt3_diag_stop();
     VT3_CINFO("app", "runtime reset for a new match (renderer, audio, menu, touch, input)");
 }

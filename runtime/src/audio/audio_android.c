@@ -18,6 +18,7 @@
 #include <aaudio/AAudio.h>
 
 #include <math.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,13 @@ struct vt3_audio {
     _Atomic int lost;             /* set by the error callback: the device dropped the stream */
     _Atomic uint32_t reopen_failures;
     _Atomic uint64_t retry_at_ns; /* a reopen is not attempted before this */
+    /* Stream transitions (open, pause, resume, reopen, close) are serialised by this lock: the
+     * reopen watchdog below runs on its own thread instead of on the platform thread. */
+    pthread_mutex_t api_mu;
+    pthread_cond_t wake_cv;       /* timed on CLOCK_MONOTONIC; signalled when the state changes */
+    pthread_t watchdog;
+    _Atomic int watchdog_on;
+    _Atomic int stopping;         /* close is in progress: the watchdog must leave */
 };
 
 static vt3_audio *g_open;        /* the one open output, for the platform pump's pause/recover */
@@ -145,80 +153,12 @@ static int open_stream(vt3_audio *a)
     return 0;
 }
 
-int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
+/* One reopen attempt, with api_mu held: drop what is left of the old stream, empty the ring (what
+ * it holds was produced for that stream) and open a new one. Never final: a failure only schedules
+ * the next attempt. */
+static void reopen_locked(vt3_audio *a)
 {
-    *out = NULL;
-    vt3_audio *a = calloc(1, sizeof *a);
-    if (!a) return -1;
-    a->fmt = fmt;
-    a->frame_bytes = (size_t)fmt.channels * sizeof(int16_t);
-    atomic_store(&a->paused, atomic_load(&g_platform_paused));
-    a->rb = vt3_rb_create(buffer_bytes);
-    if (!a->rb) { free(a); return -1; }
-    if (open_stream(a) != 0) {
-        /* The output can be busy or not up yet at a cold start (another app holding it, or the
-         * device still settling). Keep the object and let the platform pump retry: failing the
-         * open here would leave the game silent for the whole session. While there is no
-         * stream the mixer drops audio and keeps its timeline on the wall clock. */
-        VT3_CWARN("audio", "no output yet; the platform pump will retry");
-        atomic_store(&a->lost, 1);
-        atomic_store(&a->retry_at_ns, now_ns() + 250000000u);
-        g_open = a;
-        vt3_diag_bind_audio(a);
-        *out = a;
-        return 0;
-    }
-    g_open = a;
-    vt3_diag_bind_audio(a);
-    *out = a;
-    return 0;
-}
-
-void vt3_audio_pause(int paused)
-{
-    int want = paused ? 1 : 0;
-    atomic_store(&g_platform_paused, want);
-    vt3_audio *a = g_open;
-    if (!a) return;                          /* remembered: the next open starts paused */
-    if (atomic_load(&a->paused) == want) return;   /* already in that state: no AAudio churn */
-    if (!a->stream) {
-        /* Nothing to pause. Resuming is a good moment to retry an output that never opened. */
-        atomic_store(&a->paused, want);
-        if (!paused) atomic_store(&a->retry_at_ns, 0);
-        return;
-    }
-    aaudio_result_t rc = paused ? AAudioStream_requestPause(a->stream)
-                                : AAudioStream_requestStart(a->stream);
-    if (rc != AAUDIO_OK) {
-        VT3_CWARN("audio", "%s failed: %s", paused ? "pause" : "restart",
-                  AAudio_convertResultToText(rc));
-        /* A resume the stream refuses means it is no longer in a state we can use (the device
-         * dropped it): the pump reopens it instead of the game staying silent for good. */
-        if (!paused) atomic_store(&a->lost, 1);
-        return;
-    }
-    atomic_store(&a->paused, want);
-    VT3_CINFO("audio", "output %s", paused ? "paused" : "resumed");
-    vt3_diag_counter(paused ? "audio_pauses" : "audio_resumes", 1);
-}
-
-int vt3_audio_streaming(const vt3_audio *a)
-{
-    /* The stream pointer itself is not read here: it is set and cleared on the platform thread,
-     * while this is called from the mixer thread. */
-    return a && atomic_load(&a->have_stream) && !atomic_load(&a->lost);
-}
-
-int vt3_audio_is_paused(const vt3_audio *a)
-{
-    return a && atomic_load(&a->paused);
-}
-
-void vt3_audio_recover(void)
-{
-    vt3_audio *a = g_open;
-    if (!a) return;
-    if (atomic_load(&a->paused)) return;          /* no output while backgrounded; resume retries */
+    if (atomic_load(&a->paused)) return;          /* no output wanted while backgrounded */
     if (a->stream && !atomic_load(&a->lost)) return;
     uint64_t now = now_ns();
     if (now < atomic_load(&a->retry_at_ns)) return;
@@ -233,8 +173,6 @@ void vt3_audio_recover(void)
         AAudioStream_close(a->stream);
         a->stream = NULL;
     }
-    /* No consumer is running now, so the ring can be emptied: what it holds was produced for
-     * the stream that just closed, and playing it after the gap would only be stale. */
     size_t stale = vt3_rb_used(a->rb);
     if (stale) vt3_diag_counter("audio_stale_resets", 1);
     vt3_rb_reset(a->rb);
@@ -252,6 +190,149 @@ void vt3_audio_recover(void)
     atomic_store(&a->retry_at_ns, 0);
     VT3_CINFO("audio", "output reopened after %u failed attempt(s); %zu stale bytes dropped",
               fails, stale);
+}
+
+/* Keeps trying to restore the stream whether or not the game produces frames. It used to happen
+ * only from vt3_audio_recover(), called once per frame by the platform pump: a stalled game, a
+ * load or a paused frame loop left the output silent with nothing driving the retry. This thread
+ * belongs to the output object (started in vt3_audio_open, joined in vt3_audio_close), so its
+ * lifetime cannot outlive the stream or the ring. */
+static void *watchdog_main(void *arg)
+{
+    vt3_audio *a = arg;
+    for (;;) {
+        pthread_mutex_lock(&a->api_mu);
+        if (atomic_load(&a->stopping)) {
+            pthread_mutex_unlock(&a->api_mu);
+            break;
+        }
+        reopen_locked(a);                          /* immediate when the state changed */
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        ts.tv_nsec += 200000000;                   /* 200 ms */
+        if (ts.tv_nsec >= 1000000000) {
+            ts.tv_sec++;
+            ts.tv_nsec -= 1000000000;
+        }
+        pthread_cond_timedwait(&a->wake_cv, &a->api_mu, &ts);
+        pthread_mutex_unlock(&a->api_mu);
+    }
+    return NULL;
+}
+
+/* Starts the reopen watchdog. A thread that cannot be created only costs the frame-driven retry,
+ * so it is a warning, not a failure of the open. */
+static void start_watchdog(vt3_audio *a)
+{
+    if (pthread_create(&a->watchdog, NULL, watchdog_main, a) == 0) {
+        atomic_store(&a->watchdog_on, 1);
+    } else {
+        atomic_store(&a->watchdog_on, 0);
+        VT3_CWARN("audio", "could not start the reopen watchdog; recovery waits for the game loop");
+    }
+}
+
+int vt3_audio_open(vt3_audio **out, vt3_audio_format fmt, size_t buffer_bytes)
+{
+    *out = NULL;
+    vt3_audio *a = calloc(1, sizeof *a);
+    if (!a) return -1;
+    /* The watchdog sleeps on this condition; CLOCK_MONOTONIC, like every clock in the port. */
+    pthread_mutex_init(&a->api_mu, NULL);
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&a->wake_cv, &attr);
+    pthread_condattr_destroy(&attr);
+    a->fmt = fmt;
+    a->frame_bytes = (size_t)fmt.channels * sizeof(int16_t);
+    atomic_store(&a->paused, atomic_load(&g_platform_paused));
+    a->rb = vt3_rb_create(buffer_bytes);
+    if (!a->rb) {
+        pthread_cond_destroy(&a->wake_cv);
+        pthread_mutex_destroy(&a->api_mu);
+        free(a);
+        return -1;
+    }
+    if (open_stream(a) != 0) {
+        /* The output can be busy or not up yet at a cold start (another app holding it, or the
+         * device still settling). Keep the object and let the platform pump retry: failing the
+         * open here would leave the game silent for the whole session. While there is no
+         * stream the mixer drops audio and keeps its timeline on the wall clock. */
+        VT3_CWARN("audio", "no output yet; the platform pump will retry");
+        atomic_store(&a->lost, 1);
+        atomic_store(&a->retry_at_ns, now_ns() + 250000000u);
+        start_watchdog(a);          /* it is what will retry this open */
+        g_open = a;
+        vt3_diag_bind_audio(a);
+        *out = a;
+        return 0;
+    }
+    start_watchdog(a);
+    g_open = a;
+    vt3_diag_bind_audio(a);
+    *out = a;
+    return 0;
+}
+
+void vt3_audio_pause(int paused)
+{
+    int want = paused ? 1 : 0;
+    atomic_store(&g_platform_paused, want);
+    vt3_audio *a = g_open;
+    if (!a) return;                          /* remembered: the next open starts paused */
+    pthread_mutex_lock(&a->api_mu);          /* not while the watchdog is replacing the stream */
+    if (atomic_load(&a->paused) != want) {   /* already in that state: no AAudio churn */
+        if (!a->stream) {
+            /* Nothing to pause. Resuming is a good moment to retry an output that never opened. */
+            atomic_store(&a->paused, want);
+            if (!paused) atomic_store(&a->retry_at_ns, 0);
+        } else {
+            aaudio_result_t rc = paused ? AAudioStream_requestPause(a->stream)
+                                        : AAudioStream_requestStart(a->stream);
+            if (rc != AAUDIO_OK) {
+                VT3_CWARN("audio", "%s failed: %s", paused ? "pause" : "restart",
+                          AAudio_convertResultToText(rc));
+                /* A resume the stream refuses means it is no longer in a state we can use (the
+                 * device dropped it): the watchdog reopens it rather than the game staying
+                 * silent. */
+                if (!paused) atomic_store(&a->lost, 1);
+            } else {
+                atomic_store(&a->paused, want);
+                VT3_CINFO("audio", "output %s", paused ? "paused" : "resumed");
+                vt3_diag_counter(paused ? "audio_pauses" : "audio_resumes", 1);
+            }
+        }
+    }
+    /* Wake the watchdog: a resume with no usable stream should not wait for the next tick. */
+    pthread_cond_signal(&a->wake_cv);
+    pthread_mutex_unlock(&a->api_mu);
+}
+
+int vt3_audio_streaming(const vt3_audio *a)
+{
+    /* The stream pointer itself is not read here: it is set and cleared on the platform thread,
+     * while this is called from the mixer thread. */
+    return a && atomic_load(&a->have_stream) && !atomic_load(&a->lost);
+}
+
+int vt3_audio_is_paused(const vt3_audio *a)
+{
+    return a && atomic_load(&a->paused);
+}
+
+/* An immediate retry, for the platform pump: the watchdog already owns the retry schedule, so a
+ * running game gets its stream back at the next frame instead of at the next tick, and the two
+ * callers cannot reopen at once (reopen_locked only runs with api_mu held). Same thread as
+ * vt3_audio_close makes the g_open read safe here, as before. */
+void vt3_audio_recover(void)
+{
+    vt3_audio *a = g_open;
+    if (!a) return;
+    if (!atomic_load(&a->lost)) return;      /* the common case: no lock, nothing to do */
+    pthread_mutex_lock(&a->api_mu);
+    reopen_locked(a);
+    pthread_mutex_unlock(&a->api_mu);
 }
 
 /* The output ring's level in milliseconds, for the diagnostics snapshot. */
@@ -286,12 +367,27 @@ void vt3_audio_close(vt3_audio *a)
         g_open = NULL;
         vt3_diag_bind_audio(NULL);
     }
+    /* Stop the watchdog first, and wait for it: it may be inside a reopen, and it must not touch
+     * the stream or the ring once they are freed. */
+    atomic_store(&a->stopping, 1);
+    pthread_mutex_lock(&a->api_mu);
+    pthread_cond_signal(&a->wake_cv);            /* wake a timed wait so the join is prompt */
+    pthread_mutex_unlock(&a->api_mu);
+    if (atomic_load(&a->watchdog_on)) {
+        pthread_join(a->watchdog, NULL);
+        atomic_store(&a->watchdog_on, 0);
+    }
+    pthread_mutex_lock(&a->api_mu);
     if (a->stream) {
         atomic_store(&a->have_stream, 0);
         AAudioStream_requestStop(a->stream);
         AAudioStream_close(a->stream);
+        a->stream = NULL;
     }
+    pthread_mutex_unlock(&a->api_mu);
     vt3_rb_destroy(a->rb);
+    pthread_cond_destroy(&a->wake_cv);
+    pthread_mutex_destroy(&a->api_mu);
     free(a);
 }
 
