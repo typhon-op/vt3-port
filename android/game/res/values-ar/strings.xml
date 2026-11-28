@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Arabic interface text. The game's own text comes from the installed disc and stays in the
+     language the disc is set to; these are the launcher's screens. The layout is right-to-left
+     (android:supportsRtl), and Ui.tracking drops letter spacing here, because tracking pulls the
+     joins of Arabic letters apart. Strings not listed fall back to English. -->
+<resources>
+    <string name="subtitle">إعادة ترجمة ثابتة للحاسب &#183; منفذ أندرويد</string>
+
+    <string name="step1_label">صورة قرص الحاسب</string>
+    <string name="step1_hint">قرص DVD الأوروبي للحاسب، بصيغة .iso. يُفكّ على هذا الجهاز، ولا يُرفع أي شيء.</string>
+    <string name="step1_button">اختيار صورة القرص</string>
+    <string name="step1_done">تم اختيار صورة القرص</string>
+
+    <string name="step2_label">VT3.exe</string>
+    <string name="step2_hint">الملف التنفيذي الإنجليزي v1.0.1، كما هو أو داخل ملف .zip. يُقارن بالنسخة التي بُني عليها هذا المنفذ.</string>
+    <string name="step2_button">اختيار VT3.exe</string>
+    <string name="step2_done">تم اختيار VT3.exe</string>
+
+    <string name="step_waiting">لم يُختر بعد</string>
+
+    <string name="storage_title">الملفات على هذا الجهاز</string>
+    <string name="storage_hint">تُقرأ اللعبة من ملفات عادية، لذا يجب أن ينتهي كل ما تحتاجه في ذاكرة حقيقية. المنتقي أعلاه يفعل ذلك دون أي إذن. السماح بالوصول إلى كل الملفات يضيف اختصارين فقط: استخدام مجلد لعبة مفكوك في مكانه، والتثبيت في مجلد تختاره. وهو يمنح الوصول إلى كل الذاكرة المشتركة، لذا هو اختياري.</string>
+    <string name="storage_allow">السماح بالوصول إلى كل الملفات</string>
+    <string name="storage_check">إعادة التحقق من الوصول</string>
+    <string name="storage_granted">تم منح الوصول إلى كل الملفات.</string>
+    <string name="storage_denied">لم يُمنح الوصول إلى كل الملفات. اختياري: يعمل المنتقي بدونه.</string>
+    <string name="storage_denied_asked">لم يُمنح الوصول إلى كل الملفات. اضغط لمراجعة الإعداد.</string>
+    <string name="storage_howto">في شاشة النظام، اسمح لهذا التطبيق بإدارة كل الملفات ثم عُد. تعيد هذه الشاشة التحقق عند العودة.</string>
+    <string name="storage_no_settings">لا توجد شاشة للوصول إلى كل الملفات على هذا الجهاز. استخدم المنتقي بدلاً منها.</string>
+    <string name="storage_old">يحتاج الوصول إلى كل الملفات إلى أندرويد 11 أو أحدث. استخدم المنتقي بدلاً منه.</string>
+    <string name="storage_no_picker">لا يوجد منتقي مجلدات على هذا الجهاز. استخدم صورة القرص بدلاً منه.</string>
+
+    <string name="source_button">استخدام مجلد لعبة مفكوك</string>
+    <string name="source_disc">صورة القرص (الخطوة 1)</string>
+    <string name="source_tree">مجلد اختير بالمنتقي</string>
+    <string name="source_not_install">%1$s لا يبدو مجلد Virtua Tennis 3 مفكوكاً: لا يحتوي على مجلد Resource.</string>
+    <string name="source_using">تُقرأ اللعبة من %1$s. يُستخدم في مكانه: لا يُنسخ شيء.</string>
+    <string name="source_read_only">يمكن قراءة %1$s لكن لا يمكن الكتابة عليه. تحفظ اللعبة إعداداتها وحفظها هناك، لذا يُنسخ إلى مساحة التطبيق بدلاً من ذلك.</string>
+    <string name="source_missing">تعذّرت قراءة %1$s (بطاقة أُزيلت أو مجلد حُذف). اختر مجلد اللعبة مرة أخرى.</string>
+    <string name="source_ambiguous">%1$s يحتوي على أكثر من مجلد فيه مجلد Resource (%2$s). اختر المجلد الذي هو مجلد بيانات اللعبة.</string>
+    <string name="source_unreadable">تعذّرت قراءة %1$s. اختر المجلد مرة أخرى.</string>
+    <string name="source_needs_access">قراءة مجلد خارج مساحة التطبيق تحتاج الوصول إلى كل الملفات. امنحه أعلاه، أو انسخ اللعبة بالمنتقي.</string>
+    <string name="source_tree_ready">تم اختيار المجلد. تُنسخ ملفاته إلى مساحة التطبيق أثناء التثبيت.</string>
+    <string name="source_tree_read_only">لا يمكن الكتابة على %1$s، لذا تُنسخ ملفاته إلى مساحة التطبيق أثناء التثبيت.</string>
+    <string name="source_tree_no_resource">لا يحتوي ذلك المجلد على مجلد Resource، لذا ليس تثبيت Virtua Tennis 3 مفكوكاً. اختر المجلد الذي يحتوي على Resource أو المجلد الذي يضمه.</string>
+    <string name="source_tree_ambiguous">يحتوي ذلك المجلد على أكثر من مجلد فيه مجلد Resource (%1$s). اختر مجلد بيانات اللعبة نفسه.</string>
+    <string name="source_tree_failed">تعذّر فتح ذلك المجلد. ربما أُلغي إذنه: اختره مرة أخرى.</string>
+    <string name="source_tree_lost">المجلد الذي اخترته سابقاً لم يبقَ متاحاً. اختره مرة أخرى، أو استخدم صورة القرص.</string>
+    <string name="source_empty">لا توجد ملفات في ذلك المجلد.</string>
+    <string name="exe_found">وُجد VT3.exe في مجلد اللعبة: %1$s</string>
+    <string name="exe_missing">%1$s لم يبقَ. اختر VT3.exe مرة أخرى.</string>
+    <string name="exe_needed">لا يوجد VT3.exe في ذلك المجلد ولا في مجلدات الأرشيف فوقه: اختره في الخطوة 2.</string>
+
+    <string name="dest_button">مجلد التثبيت</string>
+    <string name="dest_default">مساحة التطبيق (دون إذن)</string>
+    <string name="dest_needs_access">اختيار مجلد تثبيت آخر يحتاج الوصول إلى كل الملفات. امنحه أعلاه، أو أبقِ مساحة التطبيق.</string>
+    <string name="dest_unwritable">تعذّرت الكتابة في %1$s.</string>
+    <string name="dest_no_space">لا مساحة كافية هناك: يحتاج هذا التثبيت %1$s.</string>
+    <string name="dest_inside_source">لا يمكن أن يكون مجلد التثبيت داخل مجلد اللعبة. اختر مساحة التطبيق أو مجلداً آخر.</string>
+    <string name="browse_here">استخدام هذا المجلد</string>
+    <string name="browse_up">..</string>
+    <string name="copying">نسخ ملفات اللعبة&#8230; </string>
+    <string name="copying_progress">نسخ ملفات اللعبة&#8230; %1$s من %2$s</string>
+    <string name="verifying">التحقق من الملفات المثبتة&#8230;</string>
+    <string name="install_bad">لم يُثبَّت شيء. بيانات اللعبة غير مكتملة.</string>
+    <string name="install_no_source">لم يُختر شيء للتثبيت. اختر صورة القرص أو مجلد لعبة.</string>
+    <string name="install_no_exe">لم يُختر VT3.exe. اختره، أو اختر مجلد اللعبة الذي يحتويه.</string>
+    <string name="install_no_space">لا مساحة كافية: يحتاج هذا التثبيت %1$s والمتاح %2$s فقط.</string>
+    <string name="install_lost">تعذّرت قراءة بيانات اللعبة المثبتة. أعِد إعدادها هنا: لم يُحذف شيء آخر من هذا الجهاز.</string>
+    <string name="install_incomplete">%1$s لا يحتوي على مجلد Resource، لذا لن تبدأ اللعبة. لم يُبقَ شيء.</string>
+    <string name="install_cleanup_failed">تعذّر مسح التثبيت الجزئي في %1$s. أزله ثم أعد المحاولة.</string>
+    <string name="install_cancelled">أُلغي التثبيت. أُزيل النسخ الجزئي، ولم يُمس مجلد لعبتك.</string>
+    <string name="cancelling">يجري الإلغاء&#8230;</string>
+    <string name="cancel">إلغاء التثبيت</string>
+    <string name="install">تثبيت</string>
+    <string name="install_note">مجلد لعبة مفكوك لا يحتاج مساحة إضافية. فك صورة القرص يحتاج نحو 4.5 غيغابايت.</string>
+    <string name="legal">يتطلب نسختك الخاصة من Virtua Tennis 3. منفذ غير رسمي من المعجبين، غير تابع لـ SEGA.</string>
+
+    <string name="require_nothing_chosen">اختر صورة القرص أو مجلد لعبة لترى ما سيحتاجه التثبيت.</string>
+    <string name="require_direct">يُقرأ هذا المجلد في مكانه: لا حاجة إلى نسخ ولا مساحة إضافية.</string>
+    <string name="require_copy">يُنسخ هذا المجلد إلى مساحة التطبيق: يحتاج نحو %1$s حرة.</string>
+    <string name="require_unpack">يُفكّ هذا المصدر إلى مساحة التطبيق: يحتاج نحو %1$s حرة.</string>
+
+    <string name="setup_running">يجري الإعداد&#8230;</string>
+    <string name="checking_exe">التحقق من VT3.exe&#8230;</string>
+    <string name="unpacking">فك القرص&#8230; </string>
+
+    <!-- Main menu. -->
+    <string name="menu_main_title">القائمة الرئيسية</string>
+    <string name="menu_start_game">ابدأ اللعب</string>
+    <string name="menu_hint_start">العب</string>
+    <string name="menu_settings">الإعدادات</string>
+    <string name="menu_hint_settings">الرسوميات والتحكم والملفات</string>
+    <string name="menu_language">اللغة</string>
+    <string name="menu_hint_language">نصوص الواجهة</string>
+    <string name="menu_quit">خروج</string>
+    <string name="menu_hint_quit">إغلاق التطبيق بالكامل</string>
+    <string name="menu_pad_hint">D-pad &#183; تنقّل      A &#183; اختيار</string>
+    <string name="menu_footer">مجلد اللعبة: %1$s</string>
+    <string name="menu_version">VT3 Android %1$s &#183; مثبّت</string>
+    <string name="menu_not_installed">لم تُثبَّت اللعبة بعد.</string>
+    <string name="menu_data_missing">مجلد اللعبة %1$s لم يبقَ (بطاقة أُزيلت أو مجلد حُذف).</string>
+    <string name="menu_data_invalid">%1$s لم يبقَ يحتوي بيانات اللعبة (مجلد Resource مفقود).</string>
+    <string name="menu_image_missing">صورة اللعبة مفقودة من مساحة التطبيق. أعِد الإعداد لإعادة بنائها.</string>
+
+    <!-- Language. -->
+    <string name="language_title">اللغة</string>
+    <string name="language_hint">لغة هذه الشاشات: الإعداد والقائمة الرئيسية والإعدادات والتشخيص.</string>
+    <string name="language_note">نص اللعبة وتعليقها يأتيان من القرص الذي ثبّته. الإصدار الأوروبي يحمل الإنجليزية والفرنسية والألمانية والإسبانية والإيطالية؛ واللعبة تختار لغتها هناك.</string>
+
+    <!-- Settings. -->
+    <string name="settings">الإعدادات</string>
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_close">إغلاق</string>
+    <string name="settings_return">العودة إلى القائمة الرئيسية</string>
+    <string name="tab_graphics">الرسوميات والأداء</string>
+    <string name="tab_controls">التحكم والصوت</string>
+    <string name="tab_advanced">متقدم</string>
+    <string name="tab_game">ملفات اللعبة</string>
+    <string name="tab_driver">أدوات Adreno</string>
+    <string name="settings_quality">الجودة</string>
+    <string name="settings_preset">إعداد الجودة</string>
+    <string name="settings_preset_hint">منخفض ومتوسط ومرتفع نقاط بداية مختارة لهذا الجهاز؛ تلقائي يتبع الجهاز؛ مخصص يحفظ إعداداتك. تغيير أي خيار أدناه يحوّل الإعداد إلى مخصص.</string>
+    <string name="settings_display">العرض</string>
+    <string name="settings_resolution">دقة العرض</string>
+    <string name="settings_resolution_hint">الأصلي يعرض بارتفاع الشاشة نفسه. الارتفاع الأقل يعني وقت معالجة وحرارة أقل.</string>
+    <string name="settings_scale">مقياس الدقة</string>
+    <string name="settings_scale_hint">يعرض بنسبة من الارتفاع المختار ثم يكبّر. الأقل أبرد وأسرع.</string>
+    <string name="settings_aniso">الترشيح متغاير الزوايا</string>
+    <string name="settings_aniso_hint">ترشيح الأسطح المرئية بزاوية، كالملعب. قد يخفضه حارس الحرارة عند سخونة الهاتف.</string>
+    <string name="settings_widescreen">الشاشة العريضة</string>
+    <string name="settings_widescreen_hint">ملء عريض Hor+. الإيقاف يعيد الإطار 4:3 الأصلي.</string>
+    <string name="settings_shadows">ظلال المباراة</string>
+    <string name="settings_shadows_hint">خرائط ظلال التباين في اللعبة. الإيقاف أرخص على معالج الرسومات وأقل عمقاً تحت الأضواء.</string>
+    <string name="settings_frames">معدل الإطارات</string>
+    <string name="settings_fps">حد معدل الإطارات</string>
+    <string name="settings_fps_hint">30 أو 35 أو 40 أو 45 أو 50 أو 55 أو 60 إطاراً، أو معدل الشاشة نفسه. الحد مستقل عن الإعداد.</string>
+    <string name="settings_pacing_note">تتبع وتيرة الإطارات هذا الحد: يضبطها العارض ويطلب من الشاشة المعدل المطابق. تغيير الوتيرة لا يعيد أي إعداد رسومي.</string>
+    <string name="settings_overlay">تراكب الأداء</string>
+    <string name="settings_overlay_on">إظهار الإطارات والحرارة</string>
+    <string name="settings_overlay_hint">لوحة صغيرة أثناء اللعب: الإطارات في الثانية وحرارة المعالج والبطارية. مخفية في القوائم.</string>
+    <string name="settings_overlay_size">حجم التراكب</string>
+    <string name="settings_overlay_size_hint">المختصر سطر واحد؛ الموسّع يضيف زمن الإطار وحالة الحرارة.</string>
+    <string name="settings_overlay_compact">مختصر</string>
+    <string name="settings_overlay_full">موسّع</string>
+    <string name="settings_thermal">الحرارة والبطارية</string>
+    <string name="settings_thermal_guard">حارس الحرارة</string>
+    <string name="settings_thermal_guard_hint">خطوات تدريجية قابلة للتراجع عندما يبلّغ أندرويد بسخونة الهاتف: ترشيح أقل فوراً، ودقة أقل في التشغيل التالي. الإيقاف يثبّت إعداداتك.</string>
+    <string name="settings_thermal_state">حالة الحرارة</string>
+    <string name="settings_device_hint">من خدمة الحرارة في أندرويد وفئة هذا الجهاز.</string>
+    <string name="settings_unknown">غير متاح</string>
+    <string name="settings_effective">الفعلي الآن: %1$s إطار/ث، الارتفاع %2$s، الترشيح %3$s، المقياس %4$s%%</string>
+    <string name="settings_native">أصلي</string>
+    <string name="settings_restart">تطبيق وبدء اللعبة</string>
+    <string name="settings_note">تُقرأ إعدادات الرسوميات عند بدء العارض، لذا هذا يشغّل اللعبة بها. كل إعداد محفوظ بالفعل؛ الرجوع يخرج دون بدء.</string>
+    <string name="settings_diagnostics">التشخيص</string>
+    <string name="settings_reinstall">تغيير التثبيت / إعادة التثبيت</string>
+    <string name="settings_reinstall_ask">العودة إلى الإعداد؟ تبقى بيانات اللعبة على هذا الجهاز؛ ويمكن للتثبيت التالي قراءة مجلد آخر أو فك صورة القرص مجدداً.</string>
+
+    <string name="settings_touch">عناصر التحكم على الشاشة</string>
+    <string name="settings_touch_on">إظهار عناصر التحكم على الشاشة</string>
+    <string name="settings_touch_hint">لوحة اللمس والأزرار والعصي المرسومة فوق اللعبة على الهاتف.</string>
+    <string name="settings_touch_force">الإظهار مع يد التحكم</string>
+    <string name="settings_touch_force_hint">تبقى عناصر التحكم ظاهرة حتى مع توصيل يد تحكم، وهي طريقة تجاهل اليد واللعب على الزجاج.</string>
+    <string name="settings_touch_size">حجم عناصر التحكم</string>
+    <string name="settings_touch_size_hint">يغيّر مقياس التخطيط كله، بما فيه العصي.</string>
+    <string name="settings_touch_alpha">عتامة عناصر التحكم</string>
+    <string name="settings_touch_alpha_hint">الأقل يبقي الملعب واضحاً تحت العناصر.</string>
+    <string name="settings_touch_mono">عناصر تحكم أحادية اللون</string>
+    <string name="settings_touch_mono_hint">ترسم العناصر بلون واحد بدل ألوان كل زر.</string>
+    <string name="settings_controls_guide">دليل التحكم</string>
+    <string name="settings_controls_note">يد التحكم ولوحة المفاتيح مدعومتان دائماً؛ وتخفي عناصر الشاشة نفسها عند استخدام إحداهما، إلا إذا أبقاها الخيار أعلاه.</string>
+    <string name="settings_sound">الصوت</string>
+    <string name="settings_volume">مستوى الصوت</string>
+    <string name="settings_volume_hint">يُطبَّق على مخرج اللعبة المدمج على هذا الجهاز.</string>
+    <string name="settings_mute">كتم</string>
+    <string name="settings_mute_hint">يسكت موسيقى اللعبة ومؤثراتها دون إيقاف الخلاط.</string>
+    <string name="settings_audio_note">يعمل الصوت في خيطه الخاص عبر AAudio، منفصلاً عن خيط العرض؛ ولا تغيّر هذه الإعدادات تخزينه المؤقت.</string>
+
+    <string name="settings_rendering">العرض</string>
+    <string name="settings_renderer">العارض</string>
+    <string name="settings_renderer_hint">ترجمة Direct3D 9 في هذا المنفذ تعمل على Vulkan في أندرويد.</string>
+    <string name="settings_vulkan">دعم Vulkan</string>
+    <string name="settings_vulkan_hint">كما تعلنه المنصة؛ يختار العارض مساراته من هذه القدرات لا من ماركة المعالج.</string>
+    <string name="settings_shader_pack">حزمة التظليل</string>
+    <string name="settings_shader_pack_hint">تظليلات SPIR-V المترجمة، تُحدَّث عند تحديث التطبيق.</string>
+    <string name="settings_missing">مفقود</string>
+    <string name="settings_memory">الذاكرة والتحميل</string>
+    <string name="settings_ram">الذاكرة المستخدمة</string>
+    <string name="settings_ram_hint">المتاح من الإجمالي كما يبلّغ أندرويد.</string>
+    <string name="settings_free">المساحة الحرة</string>
+    <string name="settings_free_hint">حيث توجد بيانات اللعبة.</string>
+    <string name="settings_developer">المطوّر</string>
+    <string name="settings_detail_hint">يضيف تفاصيل التصحيح إلى السجل. مطفأ افتراضياً كي لا يمتلئ اللعب العادي.</string>
+    <string name="settings_trace_audio">تتبع الصوت</string>
+    <string name="settings_trace_audio_hint">يسجّل الخلاط مرة في الثانية: النقص، الكتل القديمة، امتلاء الحلقة.</string>
+    <string name="settings_trace_fps">تتبع زمن الإطار</string>
+    <string name="settings_trace_fps_hint">يسجّل مدرج زمن الإطار في العارض مرة في الثانية.</string>
+    <string name="settings_developer_note">تكتب هذه في السجل نفسه. تستهلك وقتاً كل ثانية وهي لتقرير لا للعب.</string>
+    <string name="settings_developer_hidden">تظهر أدوات المطوّر هنا عند تشغيل السجل المفصّل.</string>
+    <string name="settings_maintenance">الصيانة</string>
+    <string name="settings_reset_graphics">إعادة الرسوميات إلى افتراضيات الجهاز</string>
+
+    <string name="settings_game_source">مصدر اللعبة</string>
+    <string name="settings_game_folder">مجلد اللعبة</string>
+    <string name="settings_ok">صالح</string>
+    <string name="settings_problem">مشكلة</string>
+    <string name="settings_validation">التحقق</string>
+    <string name="settings_validation_ok">يحتوي المجلد على Resource/ وبُنيت الصورة من VT3.exe المدعوم.</string>
+    <string name="settings_image">صورة اللعبة</string>
+    <string name="settings_install_folder">مجلد التثبيت</string>
+    <string name="settings_install_folder_hint">أين يذهب التثبيت المنسوخ؛ مساحة التطبيق ما لم يُغيَّر.</string>
+    <string name="settings_access">الوصول إلى كل الملفات</string>
+    <string name="settings_access_hint">اختياري؛ يعمل المنتقي بدونه.</string>
+    <string name="settings_change_source">تغيير مجلد اللعبة أو صورة القرص</string>
+    <string name="settings_verify">التحقق من ملفات اللعبة</string>
+    <string name="settings_verify_ok">بيانات اللعبة في %1$s قابلة للقراءة وكافية للبدء. تم التحقق من صورة VT3.exe عند بنائها.</string>
+    <string name="settings_game_note">تغيير المصدر يمسح سجل التثبيت فقط. لا يُحذف شيء من مجلد لعبتك، ويمكن الإبقاء على تثبيت ما يزال صالحاً.</string>
+
+    <!-- Adreno Tools. -->
+    <string name="driver_system">برنامج التشغيل النظامي قيد الاستخدام (لم يُستورد شيء).</string>
+    <string name="driver_imported">الحزمة المستوردة: %1$s</string>
+    <string name="driver_import">استيراد حزمة برنامج تشغيل</string>
+    <string name="driver_no_picker">لا يوجد منتقي ملفات على هذا الجهاز.</string>
+    <string name="driver_use_system">استخدام برنامج التشغيل النظامي</string>
+    <string name="driver_rollback">استعادة الاستيراد السابق</string>
+    <string name="driver_rolled_back">تمت استعادة الحزمة المستوردة السابقة.</string>
+    <string name="driver_no_backup">لا يوجد استيراد سابق لاستعادته.</string>
+    <string name="driver_clear">إزالة الحزم المستوردة</string>
+    <string name="driver_cleared">أُزيلت الحزم المستوردة. لم يُمس برنامج التشغيل النظامي.</string>
+    <string name="driver_stored">محفوظة على هذا الجهاز</string>
+    <string name="driver_note">لا يكتب شيء هنا خارج مساحة التطبيق، ولا يحتاج صلاحية الجذر، ولا يغيّر قسم نظام. حزمة برنامج التشغيل التي تستوردها تبقى لك؛ ولا تُضمَّن أي حزمة.</string>
+    <string name="driver_name">الحزمة: %1$s</string>
+    <string name="driver_library">المكتبة: %1$s</string>
+    <string name="driver_abi">البنية: %1$s</string>
+    <string name="driver_version">الإصدار: %1$s</string>
+    <string name="driver_size">الحجم: %1$s</string>
+    <string name="driver_sha">SHA-256: %1$s</string>
+    <string name="driver_valid">تم التحقق من حزمة برنامج التشغيل</string>
+    <string name="driver_invalid">ذلك الملف ليس حزمة برنامج تشغيل صالحة</string>
+    <string name="driver_keep">الإبقاء على هذه الحزمة</string>
+    <string name="driver_saved">%1$s محفوظة على هذا الجهاز.</string>
+    <string name="driver_save_failed">تعذّر الإبقاء على تلك الحزمة: %1$s</string>
+</resources>

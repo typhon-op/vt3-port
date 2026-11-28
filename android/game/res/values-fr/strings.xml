@@ -9,6 +9,8 @@
     <string name="menu_hint_settings">Graphismes, commandes, fichiers</string>
     <string name="menu_language">Langue</string>
     <string name="menu_hint_language">Textes de l\'interface</string>
+    <string name="menu_quit">Quitter</string>
+    <string name="menu_hint_quit">Fermer compl\u00e8tement l\'application</string>
     <string name="menu_pad_hint">Croix directionnelle \u00b7 naviguer      A \u00b7 valider</string>
     <string name="menu_footer">Dossier du jeu : %1$s</string>
     <string name="menu_not_installed">Le jeu n\'est pas encore install\u00e9.</string>
@@ -17,6 +19,7 @@
     <string name="language_note">Les textes et commentaires du jeu viennent du disque install\u00e9. L\'\u00e9dition europ\u00e9enne contient l\'anglais, le fran\u00e7ais, l\'allemand, l\'espagnol et l\'italien ; le jeu choisit sa langue l\u00e0-bas.</string>
     <string name="settings_title">R\u00e9glages</string>
     <string name="settings_close">Fermer</string>
+    <string name="settings_return">Retour au menu principal</string>
     <string name="tab_graphics">Graphismes et performances</string>
     <string name="tab_controls">Commandes et son</string>
     <string name="tab_advanced">Avanc\u00e9</string>

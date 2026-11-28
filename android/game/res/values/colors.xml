@@ -48,5 +48,12 @@
     <color name="vt3_bar_fill">#F6F8FA</color>
     <color name="vt3_bar_edge">#B9C3CD</color>
     <color name="vt3_scrim">#33000000</color>
+
+    <!-- The menu screens' dark ground and the tones that sit on it, as the game's own menus do:
+         red-orange bars, white italic capitals, faded orange row labels and gold accents. -->
+    <color name="vt3_night">#1A0906</color>
+    <color name="vt3_on_dark">#FFFFFF</color>
+    <color name="vt3_on_dark_soft">#FFF0E0D6</color>
+    <color name="vt3_band_text">#FFFFCB9E</color>
     <color name="vt3_shadow">#26000000</color>
 </resources>

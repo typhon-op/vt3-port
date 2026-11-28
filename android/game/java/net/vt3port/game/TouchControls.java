@@ -50,15 +50,16 @@ public class TouchControls extends BaseActivity {
 
     View build() {
         LinearLayout page = Ui.column(this);
-        page.setBackgroundColor(getColor(R.color.vt3_page));
+        page.setBackgroundResource(R.drawable.bg_vt3_ground);
 
         LinearLayout head = Ui.rowOf(this);
-        head.setBackgroundResource(R.drawable.bg_tab_selected);
+        head.setBackgroundResource(R.drawable.bg_vt3_title);
         head.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 12));
         TextView title = Ui.title(this, "TOUCHSCREEN CONTROLS");
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView back = Ui.text(this, "DONE", 12, 0xFFFFFFFF, true);
-        back.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        back.setBackgroundResource(R.drawable.bg_vt3_pill);
+        back.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 12), Ui.dp(this, 6));
         back.setOnClickListener(v -> finish());
         head.addView(back);
         page.addView(head);
@@ -318,7 +319,8 @@ public class TouchControls extends BaseActivity {
 
     LinearLayout slider(String label, int min, int max, int value, String suffix, IntConsumer onSet) {
         LinearLayout box = Ui.column(this);
-        TextView t = Ui.text(this, label + "   " + value + suffix, 13, getColor(R.color.vt3_ink), false);
+        TextView t = Ui.text(this, label + "   " + value + suffix, 13,
+                getColor(R.color.vt3_on_dark_soft), false);
         SeekBar bar = new SeekBar(this);
         bar.setMax(max - min);
         bar.setProgress(Math.max(0, Math.min(max - min, value - min)));

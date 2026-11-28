@@ -13,21 +13,19 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The menu after setup: Start Game, Settings, Language.
+ * The menu after setup: Start Game, Settings, Language, Quit.
  *
  * The install is re-checked every time the screen comes back, so a folder that was moved or a card
  * that was removed sends the player to setup instead of into a game that cannot start. The chosen
  * game folder is not re-picked: it lives in the install markers (see {@link Game}).
  *
- * Layout: the banner at the top, the three bars centred in whatever space is left, the install line
- * at the foot. The bars take their height from their text and the block is weighted, so a tall
- * phone does not get a band of empty screen above the menu and a short one scrolls -- no fixed
- * offsets and no negative margins.
+ * Look: the game's own main menu. The artwork sits behind a scrim, the brand is at the top left,
+ * the shoulder caps at the top corners, and the actions are red slanted bars stacked in the middle.
+ * Quit is the last bar, under Language: the exit is never where the player's thumb lands first.
  */
 public class MainMenu extends BaseActivity {
     final List<View> bars = new ArrayList<>();
@@ -71,25 +69,45 @@ public class MainMenu extends BaseActivity {
     }
 
     View build() {
+        FrameLayout root = new FrameLayout(this);
+
+        /* The artwork, dimmed: the bars must stay the brightest thing on the screen. */
+        ImageView art = new ImageView(this);
+        art.setImageResource(R.drawable.vt3_banner);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.setAlpha(0.55f);
+        art.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        root.addView(art, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        View scrim = new View(this);
+        scrim.setBackgroundResource(R.drawable.bg_vt3_scrim);
+        scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        root.addView(scrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(getColor(R.color.vt3_page));
         scroll.setVerticalScrollBarEnabled(false);
+        scroll.setBackgroundColor(0x00000000);
 
         LinearLayout page = Ui.column(this);
-        page.setPadding(Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 16), Ui.dp(this, 18));
+        page.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 16));
         scroll.addView(page, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        page.addView(header());
+        page.addView(shoulders());
+        page.addView(brand());
 
-        /* The menu block: weighted, so it fills the space between banner and footer and centres
-         * its bars there instead of leaving one band of emptiness under the banner. */
+        /* The menu block: weighted, so it fills the space between brand and footer and centres
+         * its bars there instead of leaving one band of emptiness under the heading. */
         LinearLayout block = Ui.column(this);
         block.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        bp.topMargin = Ui.dp(this, 14);
+        bp.topMargin = Ui.dp(this, 18);
         page.addView(block, bp);
 
         startBar = Ui.menuBar(this, getString(R.string.menu_start_game),
@@ -98,45 +116,45 @@ public class MainMenu extends BaseActivity {
         addBar(block, Ui.menuBar(this, getString(R.string.menu_settings),
                 getString(R.string.menu_hint_settings),
                 v -> startActivity(new Intent(this, Settings.class))));
-        addBar(block, Ui.menuBar(this, "Quit", "Close the app completely",
-                v -> quit()));
         addBar(block, Ui.menuBar(this, getString(R.string.menu_language),
                 getString(R.string.menu_hint_language),
                 v -> startActivity(new Intent(this, LanguageSelect.class))));
+        /* Under Language, as the game puts its exit at the foot of the stack. */
+        addBar(block, Ui.menuBar(this, getString(R.string.menu_quit),
+                getString(R.string.menu_hint_quit), v -> quit()));
 
-        /* Controller hint, in the game's own voice. */
-        TextView hint = Ui.text(this, getString(R.string.menu_pad_hint), 11,
-                getColor(R.color.vt3_muted), true);
-        hint.setAllCaps(true);
-        hint.setLetterSpacing(0.1f);
+        TextView hint = Ui.pill(this, getString(R.string.menu_pad_hint));
         hint.setGravity(Gravity.CENTER);
-        hint.setPadding(0, Ui.dp(this, 16), 0, 0);
-        block.addView(hint);
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hp.gravity = Gravity.CENTER_HORIZONTAL;
+        hp.topMargin = Ui.dp(this, 18);
+        page.addView(hint, hp);
 
         LinearLayout foot = Ui.column(this);
-        foot.setBackgroundResource(R.drawable.bg_ticker);
+        foot.setBackgroundResource(R.drawable.bg_vt3_panel_dark);
         foot.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fp.topMargin = Ui.dp(this, 12);
         page.addView(foot, fp);
 
-        footer = Ui.text(this, "", 11, getColor(R.color.vt3_ink_soft), false);
+        footer = Ui.text(this, "", 11, getColor(R.color.vt3_on_dark_soft), false);
         footer.setText(getString(R.string.menu_footer, Game.dataRoot(this).getAbsolutePath()));
         foot.addView(footer);
 
         TextView version = Ui.text(this, getString(R.string.menu_version, versionName()), 10,
-                getColor(R.color.vt3_muted), false);
+                getColor(R.color.vt3_on_dark_soft), false);
         version.setPadding(0, Ui.dp(this, 2), 0, 0);
         foot.addView(version);
 
-        return scroll;
+        return root;
     }
 
     void addBar(LinearLayout block, View bar) {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.bottomMargin = Ui.dp(this, 10);
+        p.bottomMargin = Ui.dp(this, 7);
         block.addView(bar, p);
         final int index = bars.size();
         bars.add(bar);
@@ -145,30 +163,20 @@ public class MainMenu extends BaseActivity {
         });
     }
 
-    View header() {
-        FrameLayout banner = new FrameLayout(this);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 196));
-        banner.setLayoutParams(lp);
+    /** The shoulder caps at the two top corners, as the game draws LB and RB. */
+    View shoulders() {
+        LinearLayout row = Ui.rowOf(this);
+        row.addView(Ui.pill(this, "LB"));
+        row.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        row.addView(Ui.pill(this, "RB"));
+        return row;
+    }
 
-        ImageView img = new ImageView(this);
-        img.setImageResource(R.drawable.vt3_banner);
-        img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        img.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        banner.addView(img, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        View scrim = new View(this);
-        scrim.setBackgroundResource(R.drawable.bg_scrim_bottom);
-        banner.addView(scrim, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout plate = Ui.column(this);
-        plate.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 12));
-        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(
+    View brand() {
+        LinearLayout col = Ui.column(this);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        pp.gravity = Gravity.BOTTOM;
-        banner.addView(plate, pp);
+        cp.topMargin = Ui.dp(this, 16);
 
         LinearLayout line = Ui.rowOf(this);
         TextView mark = Ui.text(this, getString(R.string.wordmark), 18,
@@ -182,10 +190,12 @@ public class MainMenu extends BaseActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         tp.leftMargin = Ui.dp(this, 10);
         line.addView(title, tp);
-        plate.addView(line);
-        plate.addView(Ui.subtitle(this, getString(R.string.menu_main_title)));
+        col.addView(line);
 
-        return banner;
+        TextView sub = Ui.subtitle(this, getString(R.string.menu_main_title));
+        sub.setPadding(0, Ui.dp(this, 6), 0, 0);
+        col.addView(sub);
+        return col;
     }
 
     void select(int index) {

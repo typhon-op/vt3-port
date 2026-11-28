@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A menu bar in the game's own shape: a parallelogram whose top edge is shifted right, so both
+     ends are cut on the slant. Deep red when the player is not on it, drawn as a vector because a
+     shape drawable cannot be skewed. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="56dp"
+    android:viewportWidth="320"
+    android:viewportHeight="56">
+    <path android:pathData="M10,4 L318,4 L306,52 L0,52 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="0" android:endY="56"
+                android:startColor="#A8240D"
+                android:centerColor="#7A1606"
+                android:endColor="#4E0C03" />
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M10,4 L318,4"
+        android:strokeColor="#E89A6C"
+        android:strokeWidth="1.4" />
+    <path
+        android:pathData="M0,52 L306,52"
+        android:strokeColor="#2A0602"
+        android:strokeWidth="1.4" />
+    <path
+        android:pathData="M10,4 L0,52"
+        android:strokeColor="#B5340B"
+        android:strokeWidth="3" />
+</vector>

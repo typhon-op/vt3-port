@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row of the options list: a wide, low band of translucent warm light with a thin rule under
+     it, so a column of them reads as the game's striped options screen. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="48dp"
+    android:viewportWidth="320"
+    android:viewportHeight="48">
+    <path
+        android:pathData="M0,0 L320,0 L320,48 L0,48 Z"
+        android:fillColor="#33FF6A32" />
+    <path
+        android:pathData="M0,47 L320,47"
+        android:strokeColor="#669E5A44"
+        android:strokeWidth="1.2" />
+</vector>

@@ -8,6 +8,8 @@
     <string name="menu_hint_settings">Grafica, controlli, file</string>
     <string name="menu_language">Lingua</string>
     <string name="menu_hint_language">Testi dell\'interfaccia</string>
+    <string name="menu_quit">Esci</string>
+    <string name="menu_hint_quit">Chiude del tutto l\'app</string>
     <string name="menu_pad_hint">Croce direzionale \u00b7 naviga      A \u00b7 seleziona</string>
     <string name="menu_footer">Cartella del gioco: %1$s</string>
     <string name="menu_not_installed">Il gioco non \u00e8 ancora installato.</string>
@@ -16,6 +18,7 @@
     <string name="language_note">I testi e il commento del gioco provengono dal disco installato. L\'edizione europea contiene inglese, francese, tedesco, spagnolo e italiano; il gioco sceglie la lingua l\u00ec.</string>
     <string name="settings_title">Impostazioni</string>
     <string name="settings_close">Chiudi</string>
+    <string name="settings_return">Torna al menu principale</string>
     <string name="tab_graphics">Grafica e prestazioni</string>
     <string name="tab_controls">Controlli e audio</string>
     <string name="tab_advanced">Avanzate</string>

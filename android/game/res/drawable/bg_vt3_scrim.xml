@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The scrim over the artwork on the main menu: strong at the top and the foot, lighter through
+     the middle, so the bars are legible without hiding the picture completely. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#F2140805"
+        android:centerColor="#C4120806"
+        android:endColor="#F2100504" />
+</shape>

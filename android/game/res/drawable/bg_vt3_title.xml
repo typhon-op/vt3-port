@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The band across the top of a screen, as the OPTIONS heading is drawn: orange fading to deep
+     red to the right, with a gold hairline under it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="48dp"
+    android:viewportWidth="320"
+    android:viewportHeight="48">
+    <path android:pathData="M0,0 L320,0 L320,44 L0,44 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="320" android:endY="0"
+                android:startColor="#EF7030"
+                android:centerColor="#D0431A"
+                android:endColor="#7E1605" />
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M0,44 L320,44"
+        android:strokeColor="#F0C878"
+        android:strokeWidth="2" />
+</vector>

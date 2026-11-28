@@ -15,9 +15,9 @@ import java.util.Locale;
  * it up without a restart.
  */
 final class Lang {
-    static final String[] CODES = { "system", "en", "fr", "de", "es", "it" };
+    static final String[] CODES = { "system", "en", "fr", "de", "es", "it", "ar" };
     static final String[] NAMES = { "System language", "English", "Fran\u00e7ais", "Deutsch",
-            "Espa\u00f1ol", "Italiano" };
+            "Espa\u00f1ol", "Italiano", "\u0627\u0644\u0639\u0631\u0628\u064a\u0629" };
 
     private Lang() {}
 

@@ -60,19 +60,20 @@ public class Settings extends BaseActivity {
 
     View build() {
         LinearLayout page = Ui.column(this);
-        page.setBackgroundColor(getColor(R.color.vt3_page));
+        page.setBackgroundResource(R.drawable.bg_vt3_ground);
 
-        /* Header: the selection orange, white capitals, and the way back. */
+        /* Header: the game's orange heading band, white capitals, and the way back. */
         LinearLayout head = Ui.rowOf(this);
-        head.setBackgroundResource(R.drawable.bg_tab_selected);
+        head.setBackgroundResource(R.drawable.bg_vt3_title);
         head.setPadding(Ui.dp(this, 16), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 12));
         TextView title = Ui.title(this, getString(R.string.settings_title));
         head.addView(title, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView back = Ui.text(this, getString(R.string.settings_close), 12, 0xFFFFFFFF, true);
         back.setAllCaps(true);
-        back.setLetterSpacing(0.1f);
-        back.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 6), Ui.dp(this, 6));
+        Ui.tracking(this, back, 0.1f);
+        back.setBackgroundResource(R.drawable.bg_vt3_pill);
+        back.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 12), Ui.dp(this, 6));
         back.setOnClickListener(v -> finish());
         head.addView(back);
         page.addView(head);
@@ -80,7 +81,7 @@ public class Settings extends BaseActivity {
         /* The category strip stays put while the content scrolls under it. */
         HorizontalScrollView strip = new HorizontalScrollView(this);
         strip.setHorizontalScrollBarEnabled(false);
-        strip.setBackgroundColor(getColor(R.color.vt3_page_deep));
+        strip.setBackgroundColor(0x00000000);
         tabs = Ui.rowOf(this);
         tabs.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 8));
         strip.addView(tabs);
@@ -94,10 +95,10 @@ public class Settings extends BaseActivity {
         };
         for (int i = 0; i < names.length; i++) {
             final int index = i;
-            TextView t = Ui.text(this, names[i], 12, getColor(R.color.vt3_ink), true);
+            TextView t = Ui.text(this, names[i], 12, getColor(R.color.vt3_white), true);
             t.setAllCaps(true);
-            t.setLetterSpacing(0.06f);
-            t.setBackgroundResource(R.drawable.bg_tab);
+            Ui.tracking(this, t, 0.06f);
+            t.setBackgroundResource(R.drawable.bg_vt3_tab);
             t.setPadding(Ui.dp(this, 14), Ui.dp(this, 9), Ui.dp(this, 14), Ui.dp(this, 9));
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -126,8 +127,8 @@ public class Settings extends BaseActivity {
         for (int i = 0; i < tabs.getChildCount(); i++) {
             TextView t = (TextView) tabs.getChildAt(i);
             boolean on = i == index;
-            t.setBackgroundResource(on ? R.drawable.bg_tab_selected : R.drawable.bg_tab);
-            t.setTextColor(on ? 0xFFFFFFFF : 0xFF2B2723);
+            t.setBackgroundResource(on ? R.drawable.bg_vt3_tab_on : R.drawable.bg_vt3_tab);
+            t.setTextColor(on ? 0xFFFFFFFF : 0xFFFFCB9E);
         }
         content.removeAllViews();
         switch (index) {
@@ -137,6 +138,12 @@ public class Settings extends BaseActivity {
             case TAB_DRIVER: driverTab(); break;
             default: graphicsTab(); break;
         }
+        /* The way back, as the game puts it at the foot of its options list. */
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rp.topMargin = Ui.dp(this, 18);
+        content.addView(Ui.menuBar(this, getString(R.string.settings_return), null,
+                v -> finish()), rp);
         content.scrollTo(0, 0);
     }
 
@@ -494,7 +501,7 @@ public class Settings extends BaseActivity {
         content.addView(Ui.section(this, getString(R.string.tab_driver)));
         String cur = Adreno.current(this);
         driverStatus = Ui.text(this, cur == null ? getString(R.string.driver_system)
-                : getString(R.string.driver_imported, cur), 13, getColor(R.color.vt3_ink), true);
+                : getString(R.string.driver_imported, cur), 13, getColor(R.color.vt3_white), true);
         content.addView(driverStatus);
         if (cur != null) {
             String info = Adreno.describe(this, cur);

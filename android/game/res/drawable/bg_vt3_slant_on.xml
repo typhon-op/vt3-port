@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bar the player is on: the same parallelogram, lit from above with the orange-red the game
+     uses for its own selection, a gloss line across it and a pale top edge. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="56dp"
+    android:viewportWidth="320"
+    android:viewportHeight="56">
+    <path android:pathData="M10,4 L318,4 L306,52 L0,52 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="0" android:endY="56"
+                android:startColor="#FFA85C"
+                android:centerColor="#E63A12"
+                android:endColor="#A21508" />
+        </aapt:attr>
+    </path>
+    <path
+        android:pathData="M10,20 L313,20"
+        android:strokeColor="#40FFFFFF"
+        android:strokeWidth="10" />
+    <path
+        android:pathData="M10,4 L318,4"
+        android:strokeColor="#FFE3BE"
+        android:strokeWidth="2" />
+    <path
+        android:pathData="M0,52 L306,52"
+        android:strokeColor="#7E0D04"
+        android:strokeWidth="1.4" />
+    <path
+        android:pathData="M10,4 L0,52"
+        android:strokeColor="#FF8A3D"
+        android:strokeWidth="3" />
+</vector>
